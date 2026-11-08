@@ -48,7 +48,8 @@ export function errorResponse(err: unknown) {
     return json({ error: { code: err.code, message: err.message, details: err.details } }, err.status);
   }
   if (err instanceof PostValidationError) {
-    return json({ error: { code: err.status === 402 ? "plan_limit" : "validation_error", message: err.message, details: err.details } }, err.status);
+    const code = err.status === 402 ? "plan_limit" : err.status === 422 ? "platform_rejected" : "validation_error";
+    return json({ error: { code, message: err.message, details: err.details } }, err.status);
   }
   if (err instanceof LimitError) {
     return json({ error: { code: "plan_limit", message: err.message } }, 402);

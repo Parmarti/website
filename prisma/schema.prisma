@@ -121,6 +121,8 @@ model OAuthState {
   codeVerifier  String?
   redirectUrl   String?
   platformAppId String?
+  /// Encrypted JSON of accounts waiting for the user to pick (multi-account logins).
+  pendingAccounts String?
   expiresAt     DateTime
   createdAt     DateTime @default(now())
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -137,6 +139,7 @@ model Post {
   status       String       @default("scheduled") /// draft | scheduled | publishing | published | partial | failed | cancelled
   source       String       @default("api")
   externalId   String?
+  idempotencyKey String?
   publishedAt  DateTime?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -144,6 +147,7 @@ model Post {
   profile      Profile?     @relation(fields: [profileId], references: [id], onDelete: SetNull)
   targets      PostTarget[]
 
+  @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
   @@index([status, scheduledFor])
 }

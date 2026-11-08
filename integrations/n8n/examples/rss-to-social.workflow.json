@@ -1,0 +1,52 @@
+{
+  "name": "RSS to social media with Fanout",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": { "item": [{ "mode": "everyHour" }] },
+        "feedUrl": "https://example.com/blog/feed.xml"
+      },
+      "id": "5f0e7d4a-1c2b-4e5f-9a8b-0c1d2e3f4a01",
+      "name": "New blog post",
+      "type": "n8n-nodes-base.rssFeedReadTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "resource": "post",
+        "operation": "create",
+        "content": "={{ $json.title }}\n\n{{ $json.link }}",
+        "targets": {
+          "target": [
+            {
+              "accountId": "REPLACE_WITH_LINKEDIN_ACCOUNT_ID",
+              "platform": "linkedin",
+              "content": "",
+              "platformSpecificData": "={{ JSON.stringify({ link: $json.link, linkTitle: $json.title }) }}"
+            },
+            {
+              "accountId": "REPLACE_WITH_BLUESKY_ACCOUNT_ID",
+              "platform": "bluesky",
+              "content": "",
+              "platformSpecificData": "{}"
+            }
+          ]
+        },
+        "when": "now",
+        "additionalFields": { "externalId": "={{ $json.guid || $json.link }}" }
+      },
+      "id": "5f0e7d4a-1c2b-4e5f-9a8b-0c1d2e3f4a02",
+      "name": "Share on social",
+      "type": "n8n-nodes-fanout.fanout",
+      "typeVersion": 1,
+      "position": [280, 0],
+      "credentials": { "fanoutApi": { "id": "", "name": "Fanout account" } }
+    }
+  ],
+  "connections": {
+    "New blog post": { "main": [[{ "node": "Share on social", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

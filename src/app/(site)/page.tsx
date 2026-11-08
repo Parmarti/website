@@ -7,7 +7,7 @@ import { PlatformIcon } from "@/components/platform-icon";
 import { PricingTable } from "@/components/pricing-table";
 
 const features = [
-  { title: "One request, every network", body: "Send the same post to X, LinkedIn, Instagram, TikTok, YouTube and 8 more with a single POST. Override text or options per network when you need to." },
+  { title: "One request, every network", body: "Send the same post to X, LinkedIn, Instagram, TikTok, YouTube and 9 more with a single POST. Override text or options per network when you need to." },
   { title: "Hosted account connection", body: "Ask our API for a connect link, send your user there, and get an accountId back on your redirect URL. We handle OAuth, PKCE, token refresh and encryption." },
   { title: "Scheduling that keeps its promise", body: "Schedule in any IANA time zone. A queue with row-level locking, automatic retries with backoff, and clear per-network errors when a post cannot go out." },
   { title: "Webhooks for every outcome", body: "Get signed webhooks when a post is published, partly published or failed, and when a user's account is connected or needs to reconnect." },
@@ -31,7 +31,7 @@ export default function Home() {
         <div className="mx-auto grid max-w-6xl gap-12 px-4 pb-16 pt-16 sm:pt-24 lg:grid-cols-2 lg:items-center">
           <div>
             <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-3 py-1 text-xs font-medium text-ink-2">
-              <span className="h-1.5 w-1.5 rounded-full bg-ok" /> 13 networks · flat pricing · no per-account math
+              <span className="h-1.5 w-1.5 rounded-full bg-ok" /> 14 networks · flat pricing · no per-account math
             </span>
             <h1 className="mt-5 text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
               The social media API that costs the same at 1 or 50 accounts.
@@ -100,6 +100,24 @@ export default function Home() {
 }
 
 → https://app.acme.dev/done?connected=instagram&accountId=clx9...`}</CodeBlock>
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-6xl px-4 pt-20">
+        <h2 className="text-3xl font-bold tracking-tight">Works with your stack</h2>
+        <p className="mt-3 max-w-2xl text-ink-2">Use the REST API directly, or one of the ready-made integrations.</p>
+        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            { t: "Node.js and Python SDKs", d: "Typed clients with retries, idempotency keys and webhook verification." },
+            { t: "AI agents (MCP)", d: "Give Claude, Cursor or your own agent tools to post and schedule. One URL and an API key." },
+            { t: "n8n", d: "Community node with actions and a trigger. Auto-post from RSS, Airtable, Notion and more." },
+            { t: "OpenAPI 3.1", d: "Generate a client in any language, or import into Postman, Zapier, Make or GPT actions." },
+          ].map((i) => (
+            <Link key={i.t} href="/docs#sdks" className="rounded-2xl border border-line bg-white p-5 hover:border-brand">
+              <h3 className="font-semibold">{i.t}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-ink-2">{i.d}</p>
+            </Link>
+          ))}
         </div>
       </section>
 

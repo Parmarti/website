@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { LimitError, loadConnectState, oauthRedirectUri, saveAccounts } from "@/lib/accounts";
-import { appForState, connectReturnUrl } from "@/lib/connect";
+import { appForState, connectReturnUrl, storePendingAccounts } from "@/lib/connect";
 import { getAdapter, isPlatformId } from "@/lib/platforms";
 import { PlatformError } from "@/lib/platforms/http";
 import { appUrl } from "@/lib/env";
@@ -37,6 +37,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ plat
       codeVerifier: state.codeVerifier ?? undefined,
     });
     if (accounts.length === 0) return fail(`No ${adapter.name} accounts were found for this login.`);
+    if (accounts.length > 1) {
+      // Several Pages or locations: let the user choose which ones to add.
+      await storePendingAccounts(state.id, accounts);
+      return NextResponse.redirect(`${appUrl()}/connect/${platform}/select?state=${encodeURIComponent(state.state)}`);
+    }
     const saved = await saveAccounts({
       userId: state.userId,
       profileId: state.profileId,

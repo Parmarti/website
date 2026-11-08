@@ -11,7 +11,8 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate deploy",
     "postinstall": "prisma generate",
-    "start:prod": "prisma migrate deploy && next start -p ${PORT:-3000}"
+    "start:prod": "prisma migrate deploy && next start -p ${PORT:-3000}",
+    "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",

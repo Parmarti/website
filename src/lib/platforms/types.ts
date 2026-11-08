@@ -8,6 +8,7 @@ export const PLATFORM_IDS = [
   "youtube",
   "pinterest",
   "reddit",
+  "googlebusiness",
   "bluesky",
   "mastodon",
   "telegram",

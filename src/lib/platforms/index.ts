@@ -2,6 +2,7 @@ import type { PlatformAdapter, PlatformId } from "./types";
 import { blueskyAdapter } from "./bluesky";
 import { discordAdapter } from "./discord";
 import { facebookAdapter } from "./facebook";
+import { googleBusinessAdapter } from "./googlebusiness";
 import { instagramAdapter } from "./instagram";
 import { linkedinAdapter } from "./linkedin";
 import { mastodonAdapter } from "./mastodon";
@@ -25,6 +26,7 @@ export const adapters: Record<PlatformId, PlatformAdapter> = {
   youtube: youtubeAdapter,
   pinterest: pinterestAdapter,
   reddit: redditAdapter,
+  googlebusiness: googleBusinessAdapter,
   bluesky: blueskyAdapter,
   mastodon: mastodonAdapter,
   telegram: telegramAdapter,

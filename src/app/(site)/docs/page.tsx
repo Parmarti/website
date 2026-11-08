@@ -15,6 +15,9 @@ const toc = [
   ["manage-posts", "Managing posts"],
   ["accounts", "Accounts and profiles"],
   ["webhooks", "Webhooks"],
+  ["sdks", "SDKs and OpenAPI"],
+  ["mcp", "AI agents (MCP)"],
+  ["n8n", "n8n and no-code"],
   ["errors", "Errors and limits"],
   ["networks", "Network setup"],
 ];
@@ -29,6 +32,7 @@ const platformOptions: { id: string; options: [string, string][] }[] = [
   { id: "youtube", options: [["title", "video title (default: first line of content)"], ["visibility", "public (default), unlisted or private"], ["tags", "string[]"], ["categoryId", "YouTube category (default 22)"], ["madeForKids", "boolean (default false)"]] },
   { id: "pinterest", options: [["boardId", "board to pin to (default: first board)"], ["title", "pin title"], ["link", "destination URL"]] },
   { id: "reddit", options: [["subreddit", "required, without r/"], ["title", "required"], ["url", "submit a link post instead of a text post"]] },
+  { id: "googlebusiness", options: [["topicType", "STANDARD (default), EVENT or OFFER"], ["callToActionType / callToActionUrl", "button: BOOK, ORDER, SHOP, LEARN_MORE, SIGN_UP or CALL (CALL needs no URL)"], ["eventTitle / eventStart / eventEnd", "for EVENT and OFFER posts, YYYY-MM-DDTHH:mm in the business's local time"], ["couponCode / redeemUrl / terms", "OFFER details"], ["languageCode", "default en"]] },
   { id: "bluesky", options: [["replyToUri", "at:// URI of a post to reply to"], ["langs", "string[] of language codes"]] },
   { id: "mastodon", options: [["visibility", "public, unlisted, private or direct"], ["spoilerText", "content warning"], ["sensitive", "boolean"], ["language", "ISO 639 code"]] },
   { id: "telegram", options: [["parseMode", "HTML or MarkdownV2"], ["disableLinkPreview", "boolean"], ["disableNotification", "boolean: send silently"]] },
@@ -129,6 +133,10 @@ export default function Docs() {
   }
 }`}</CodeBlock>
         <p>Post statuses: <code>draft</code>, <code>scheduled</code>, <code>publishing</code>, <code>published</code>, <code>partial</code> (some networks failed), <code>failed</code>, <code>cancelled</code>. Temporary network errors are retried up to 3 times (after 1, 5 and 15 minutes).</p>
+        <p>
+          Send an <code>Idempotency-Key</code> header (any unique string, up to 255 characters) to retry safely: a second request with the same key returns
+          the first post with status <code>200</code> and the header <code>Idempotent-Replayed: true</code> instead of creating a duplicate.
+        </p>
         <p>We check every post against each network&apos;s rules before accepting it. Problems return <code>422</code> with a list per account, so you can show the user what to fix.</p>
 
         <h2 id="platform-options">Platform options</h2>
@@ -207,6 +215,58 @@ export function verify(rawBody, header, secret) {
   return fresh && crypto.timingSafeEqual(Buffer.from(v1), Buffer.from(expected));
 }`}</CodeBlock>
 
+        <h2 id="sdks">SDKs and OpenAPI</h2>
+        <p>
+          Official SDKs have no dependencies and are typed. The full API is also described as OpenAPI 3.1 at <a className="text-brand" href="/openapi.json">/openapi.json</a>, so you can generate a client in any
+          language or import it into Postman, Zapier, Make or a custom GPT action.
+        </p>
+        <h3>Node.js / TypeScript</h3>
+        <CodeBlock>{`npm install @fanout/node
+
+import { Fanout } from "@fanout/node";
+const fanout = new Fanout({ apiKey: process.env.FANOUT_API_KEY, baseUrl: "${appUrl()}" });
+
+const post = await fanout.posts.create(
+  { content: "Hello!", platforms: [{ accountId: "ACCOUNT_ID" }], publishNow: true },
+  { idempotencyKey: "launch-2026-12-01" },
+);`}</CodeBlock>
+        <h3>Python</h3>
+        <CodeBlock>{`pip install fanout
+
+from fanout import Fanout
+client = Fanout(api_key="${key}", base_url="${appUrl()}")
+post = client.posts.create(platforms=[{"accountId": "ACCOUNT_ID"}], content="Hello!", publish_now=True)`}</CodeBlock>
+        <p>Both SDKs include a webhook signature helper: <code>verifyWebhookSignature</code> (Node) and <code>verify_webhook_signature</code> (Python).</p>
+
+        <h2 id="mcp">AI agents (MCP)</h2>
+        <p>
+          {brand.name} is a remote Model Context Protocol server. Any MCP client (Claude, Cursor, VS Code, custom agents) can list accounts, publish, schedule, check results and get connect
+          links. Server URL: <code>{appUrl()}/api/mcp</code>, with your API key as a bearer token.
+        </p>
+        <CodeBlock>{`# Claude Code
+claude mcp add --transport http ${brand.name.toLowerCase()} ${appUrl()}/api/mcp --header "Authorization: Bearer ${key}"
+
+# Cursor / VS Code / other clients (mcp.json)
+{
+  "mcpServers": {
+    "${brand.name.toLowerCase()}": {
+      "url": "${appUrl()}/api/mcp",
+      "headers": { "Authorization": "Bearer ${key}" }
+    }
+  }
+}`}</CodeBlock>
+        <p>
+          Tools: <code>list_accounts</code>, <code>create_post</code>, <code>get_post</code>, <code>list_posts</code>, <code>cancel_post</code>, <code>retry_post</code>,{" "}
+          <code>get_connect_link</code>, <code>list_platforms</code>, <code>list_profiles</code>, <code>get_usage</code>. Then ask your agent: &quot;Post this changelog to LinkedIn and Bluesky
+          tomorrow at 9am.&quot;
+        </p>
+
+        <h2 id="n8n">n8n and no-code</h2>
+        <p>
+          Install the community node <code>n8n-nodes-fanout</code> in n8n (Settings &gt; Community nodes). It has an action node for posts, accounts, profiles and connect links, and a trigger
+          node that starts a workflow when a post is published or fails. For Zapier, Make and others, use an HTTP request step with the API key, or import <code>/openapi.json</code>.
+        </p>
+
         <h2 id="errors">Errors and limits</h2>
         <p>Errors use HTTP status codes and a JSON body: <code>{"{ \"error\": { \"code\", \"message\", \"details\" } }"}</code>.</p>
         <table>
@@ -215,7 +275,7 @@ export function verify(rawBody, header, secret) {
             <tr><td><code>401</code></td><td>Missing or invalid API key.</td></tr>
             <tr><td><code>402</code></td><td>Plan limit reached (<code>plan_limit</code>). Upgrade in the dashboard.</td></tr>
             <tr><td><code>404</code></td><td>Not found, or it belongs to another user.</td></tr>
-            <tr><td><code>422</code></td><td>A network cannot accept the post. <code>details</code> lists problems per account.</td></tr>
+            <tr><td><code>422</code></td><td>A network cannot accept the post (<code>platform_rejected</code>). <code>details</code> lists problems per account.</td></tr>
           </tbody>
         </table>
 

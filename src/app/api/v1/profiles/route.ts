@@ -16,6 +16,6 @@ export const GET = apiRoute(async (_req, { user }) => {
 
 export const POST = apiRoute(async (req, { user }) => {
   const body = schema.parse(await readJson(req));
-  const profile = await db.profile.create({ data: { userId: user.id, name: body.name, description: body.description } });
+  const profile = await db.profile.create({ data: { userId: user.id, name: body.name, description: body.description }, include: { _count: { select: { accounts: true } } } });
   return json({ profile: serializeProfile(profile) }, 201);
 });

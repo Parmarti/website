@@ -37,11 +37,18 @@ Check the competitor's current prices before you publish any comparison. Do not 
 | Dashboard: API keys, accounts, profiles, composer, post history, webhooks, own developer apps, billing | Done, tested |
 | Stripe Checkout, customer portal, subscription webhooks, plan limits | Done, needs your Stripe keys |
 | Landing page, pricing, API docs, terms and privacy templates | Done |
-| 13 networks: X, LinkedIn, Facebook Pages, Instagram, Threads, TikTok, YouTube, Pinterest, Reddit, Bluesky, Mastodon, Telegram, Discord | Code done; see note below |
+| Account picker when one login returns many Pages or locations (respects plan limits) | Done, tested |
+| `Idempotency-Key` on post creation (safe retries, no duplicate posts) | Done, tested |
+| Remote MCP server for AI agents (`/api/mcp`, 10 tools) | Done, tested with the official MCP client |
+| OpenAPI 3.1 spec (`/openapi.json`) | Done, validated |
+| Node.js and Python SDKs (`sdks/`) | Done, 25 + 23 tests pass |
+| n8n community node with trigger (`integrations/n8n`) | Done, 10 tests pass, not yet tried in a live n8n |
+| Contract tests for all 14 network adapters (`npm test`) | 42 tests pass |
+| 14 networks: X, LinkedIn, Facebook Pages, Instagram, Threads, TikTok, YouTube, Pinterest, Reddit, Google Business, Bluesky, Mastodon, Telegram, Discord | Code done; see note below |
 
 **Important:** this sandbox cannot reach the real social networks. The full publish flow was tested end to end against a local mock server (44 automated checks pass). Each network's real API must be tested once with a real account after you deploy. Start with the "works today" networks in section 4.
 
-**Not built yet (roadmap, sell as "coming soon"):** analytics, inbox (comments and DMs), ads, WhatsApp, Google Business, Snapchat, file upload endpoint (media is sent as public URLs), team members, password reset email (users email support for now).
+**Not built yet (roadmap, sell as "coming soon"):** analytics, inbox (comments and DMs), ads, WhatsApp, Snapchat, file upload endpoint (media is sent as public URLs), team members, password reset email (users email support for now).
 
 ---
 
@@ -85,8 +92,9 @@ Redirect URI for every OAuth network: `{APP_URL}/api/connect/{platform}/callback
 4. **Meta (Facebook, Instagram, Threads):** developers.facebook.com > Create app (Business). Add Facebook Login, the "Instagram API with Instagram login" product and the Threads API. In development mode, people you add as app testers can connect at once. For the public, submit App Review for `pages_manage_posts`, `instagram_business_content_publish` and `threads_content_publish` (needs the privacy policy URL `/legal/privacy`, a screencast, and business verification). Set `FACEBOOK_*`, `INSTAGRAM_*` (Instagram app ID is different from the Facebook app ID), `THREADS_*`.
 5. **TikTok:** developers.tiktok.com > app with Login Kit + Content Posting API (scopes `user.info.basic`, `video.publish`, `video.upload`). Until TikTok audits the app, posts are private (SELF_ONLY). Submit the audit on day 1.
 6. **YouTube:** Google Cloud > enable YouTube Data API v3 > OAuth consent screen > Web client. Unverified apps: 100 test users, and uploads stay private until Google approves an API audit.
-7. **Pinterest:** developers.pinterest.com > app. Trial access works at once with limits; request standard access.
-8. **Reddit:** reddit.com/prefs/apps > "web app". Set `REDDIT_USER_AGENT`. Commercial use needs Reddit's approval.
+7. **Google Business Profile:** same Google Cloud project as YouTube. Enable "My Business Account Management API", "My Business Business Information API" and the Google My Business API, then request API access with Google's form (quota is 0 until approved). Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` to share one client with YouTube. Agencies with many locations pick which ones to connect.
+8. **Pinterest:** developers.pinterest.com > app. Trial access works at once with limits; request standard access.
+9. **Reddit:** reddit.com/prefs/apps > "web app". Set `REDDIT_USER_AGENT`. Commercial use needs Reddit's approval.
 
 Customers who already have their own approved apps can paste them in **Dashboard > Developer apps** and skip your approval wait. This is a strong selling point for agencies and SaaS teams: say it in every conversation.
 
@@ -105,13 +113,23 @@ Prices and limits live in `src/lib/plans.ts`.
 
 ---
 
-## 6. Get the first paying users (48 hour plan)
+## 6. Publish the integrations (1 to 2 hours, big distribution boost)
+
+Change the placeholder names first (`@fanout/node`, `fanout`, `n8n-nodes-fanout`, and the `https://api.example.com` default URL in each SDK).
+
+- **Node SDK:** `cd sdks/node && npm run build && npm publish --access public`
+- **Python SDK:** `cd sdks/python && python3 -m build && twine upload dist/*`
+- **n8n node:** `cd integrations/n8n && npm run build && npm publish`. Then submit it for n8n's verified community nodes. n8n users search the node list, so this is free discovery.
+- **MCP server:** add it to the public MCP registries and directories (the official MCP registry, Smithery, mcp.so, PulseMCP). AI agent builders look there first. Server URL: `{APP_URL}/api/mcp`, auth: `Authorization: Bearer <API key>`.
+- **OpenAPI:** `{APP_URL}/openapi.json` works for Postman collections, custom GPT actions and Zapier/Make HTTP steps.
+
+## 7. Get the first paying users (48 hour plan)
 
 **Who buys this now:** developers building AI agents, n8n/Make/Zapier automation builders, indie SaaS founders who need "share to social" features, and small agencies that manage 10 to 50 client accounts.
 
 **Day 1 (after deploy):**
 
-- Post on X and LinkedIn from the product itself: "I built a social media API with flat pricing. 13 networks, $9 for 10 accounts." Include a 30 second screen recording of one curl call posting to 3 networks.
+- Post on X and LinkedIn from the product itself: "I built a social media API with flat pricing. 14 networks, $9 for 10 accounts." Include a 30 second screen recording of one curl call posting to 3 networks.
 - Show HN: "Show HN: A flat-priced unified social media posting API". Be in the thread for the first 3 hours.
 - Post in r/SaaS, r/n8n, r/automation, r/webdev (follow each subreddit's self-promotion rules), Indie Hackers, and the n8n community forum with a working n8n HTTP Request example.
 - Direct messages: search X, Reddit and Indie Hackers for people asking "social media API", "schedule posts API", "post to Instagram and TikTok with one API", or complaining about per-account pricing. Offer the `FOUNDER50` code and free migration help. Aim for 50 personal messages.
@@ -127,7 +145,7 @@ Prices and limits live in `src/lib/plans.ts`.
 
 ---
 
-## 7. Before you take money
+## 8. Before you take money
 
 - [ ] Change the name in `src/lib/brand.ts` and check that the domain and trademark are free.
 - [ ] Have a lawyer review `/legal/terms` and `/legal/privacy` (replace `[COMPANY]` and `[JURISDICTION]`).
@@ -136,11 +154,12 @@ Prices and limits live in `src/lib/plans.ts`.
 - [ ] Turn on database backups in your host.
 - [ ] Set up an email inbox for `SUPPORT_EMAIL`.
 
-## 8. Local development
+## 9. Local development
 
 ```bash
 cp .env.example .env      # set DATABASE_URL and APP_URL=http://localhost:3000
 npm install
 npx prisma migrate deploy
 RUN_SCHEDULER=1 npm run dev
+npm test                  # adapter contract tests
 ```

@@ -10,50 +10,68 @@ function weightedLength(text: string): number {
   return [...text.replace(/https?:\/\/\S+/g, "x".repeat(23))].length;
 }
 
-async function uploadImage(token: string, item: MediaItem): Promise<string> {
-  const file = await downloadMedia(item.url, 5 * 1024 * 1024);
-  const body = new FormData();
-  body.append("media", new Blob([new Uint8Array(file.buffer)], { type: file.contentType }), file.filename);
-  body.append("media_category", file.contentType === "image/gif" ? "tweet_gif" : "tweet_image");
-  body.append("media_type", file.contentType);
-  const res = await fetchJson<any>(`${API}/media/upload`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body,
-    label: "X image upload",
-  });
-  const id = res?.data?.id ?? res?.media_id_string;
-  if (!id) throw new PlatformError(`X image upload returned no media id: ${JSON.stringify(res).slice(0, 300)}`);
-  return String(id);
-}
+type MediaCategory = "tweet_image" | "tweet_gif" | "tweet_video";
 
-async function uploadVideo(token: string, item: MediaItem): Promise<string> {
-  const file = await downloadMedia(item.url, 512 * 1024 * 1024);
+/** X API v2 chunked upload (initialize, append, finalize, then poll status). Used for images and video. */
+async function uploadMedia(token: string, item: MediaItem): Promise<string> {
+  const isVideo = item.type === "video";
+  const file = await downloadMedia(item.url, isVideo ? 512 * 1024 * 1024 : 15 * 1024 * 1024);
+  const category: MediaCategory = isVideo ? "tweet_video" : file.contentType === "image/gif" ? "tweet_gif" : "tweet_image";
+  if (category === "tweet_image" && file.size > 5 * 1024 * 1024) throw new PlatformError("X images must be 5 MB or smaller.");
   const auth = { Authorization: `Bearer ${token}` };
+
   const init = await fetchJson<any>(`${API}/media/upload/initialize`, {
     method: "POST",
     headers: { ...auth, "Content-Type": "application/json" },
-    body: JSON.stringify({ media_type: file.contentType || "video/mp4", total_bytes: file.size, media_category: "tweet_video" }),
-    label: "X video init",
+    body: JSON.stringify({
+      media_type: file.contentType || (isVideo ? "video/mp4" : "image/jpeg"),
+      total_bytes: file.size,
+      media_category: category,
+    }),
+    label: "X media init",
   });
-  const id = String(init.data.id);
+  const id = String(init?.data?.id ?? "");
+  if (!id) throw new PlatformError(`X media init returned no id: ${JSON.stringify(init).slice(0, 300)}`);
+
   for (let i = 0, offset = 0; offset < file.size; i++, offset += CHUNK) {
     const body = new FormData();
     body.append("media", new Blob([new Uint8Array(file.buffer.subarray(offset, offset + CHUNK))]), "chunk");
     body.append("segment_index", String(i));
-    const res = await fetch(`${API}/media/upload/${id}/append`, { method: "POST", headers: auth, body });
-    if (!res.ok) throw new PlatformError(`X video upload failed (${res.status}): ${(await res.text()).slice(0, 300)}`, { retryable: res.status >= 500 });
+    let res: Response;
+    try {
+      res = await fetch(`${API}/media/upload/${id}/append`, { method: "POST", headers: auth, body, signal: AbortSignal.timeout(120_000) });
+    } catch (err) {
+      throw new PlatformError(`X media upload failed: ${(err as Error).message}`, { retryable: true });
+    }
+    if (!res.ok) {
+      throw new PlatformError(`X media upload failed (${res.status}): ${(await res.text()).slice(0, 300)}`, {
+        status: res.status,
+        retryable: res.status === 429 || res.status >= 500,
+        auth: res.status === 401,
+      });
+    }
   }
-  const fin = await fetchJson<any>(`${API}/media/upload/${id}/finalize`, { method: "POST", headers: auth, label: "X video finalize" });
+
+  const fin = await fetchJson<any>(`${API}/media/upload/${id}/finalize`, { method: "POST", headers: auth, label: "X media finalize" });
   let info = fin?.data?.processing_info;
-  for (let tries = 0; info && info.state !== "succeeded" && tries < 60; tries++) {
-    if (info.state === "failed") throw new PlatformError(`X could not process the video: ${JSON.stringify(info.error ?? info)}`);
+  for (let tries = 0; info && info.state !== "succeeded"; tries++) {
+    if (info.state === "failed") throw new PlatformError(`X could not process the media: ${JSON.stringify(info.error ?? info)}`);
+    if (tries >= 60) throw new PlatformError("X media processing took too long.", { retryable: true });
     await sleep(Math.max(1, info.check_after_secs ?? 3) * 1000);
     const status = await fetchJson<any>(`${API}/media/upload?${new URLSearchParams({ command: "STATUS", media_id: id })}`, {
       headers: auth,
-      label: "X video status",
+      label: "X media status",
     });
     info = status?.data?.processing_info;
+  }
+
+  if (item.altText && !isVideo) {
+    await fetchJson(`${API}/media/metadata`, {
+      method: "POST",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ id, metadata: { alt_text: { text: item.altText.slice(0, 1000) } } }),
+      label: "X alt text",
+    }).catch((err) => console.warn("[twitter] alt text failed", (err as Error).message));
   }
   return id;
 }
@@ -150,9 +168,10 @@ export const twitterAdapter: OAuthAdapter = {
     if (!token) throw new PlatformError("Missing X token. Reconnect the account.", { auth: true });
 
     const video = ctx.media.find((m) => m.type === "video");
-    const mediaIds = video
-      ? [await uploadVideo(token, video)]
-      : await Promise.all(ctx.media.filter((m) => m.type === "image").slice(0, 4).map((m) => uploadImage(token, m)));
+    const mediaIds: string[] = [];
+    for (const item of video ? [video] : ctx.media.filter((m) => m.type === "image").slice(0, 4)) {
+      mediaIds.push(await uploadMedia(token, item));
+    }
 
     const firstId = await postTweet(token, {
       text: ctx.content,

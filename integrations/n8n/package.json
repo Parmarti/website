@@ -1,0 +1,42 @@
+{
+  "name": "n8n-nodes-fanout",
+  "version": "0.1.0",
+  "description": "n8n nodes for the Fanout unified social media API: publish and schedule posts to 14 networks, and react to post and account events.",
+  "keywords": [
+    "n8n-community-node-package",
+    "social media",
+    "scheduling",
+    "linkedin",
+    "instagram",
+    "tiktok",
+    "bluesky"
+  ],
+  "license": "MIT",
+  "main": "index.js",
+  "files": [
+    "dist",
+    "index.js"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/copy-icons.js",
+    "test": "npm run build && node --test test/nodes.test.js"
+  },
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/FanoutApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/Fanout/Fanout.node.js",
+      "dist/nodes/Fanout/FanoutTrigger.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "n8n-workflow": "1.120.35",
+    "typescript": "5.9.3"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}

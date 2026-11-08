@@ -26,8 +26,11 @@ function restHeaders(token: string): Record<string, string> {
  * Hashtags are turned into the hashtag template so they stay clickable.
  */
 export function toLittleText(text: string): string {
-  const escaped = text.replace(/[\\|{}@[\]()<>#*_~]/g, (c) => `\\${c}`);
-  return escaped.replace(/\\#([\p{L}\p{N}_]+)/gu, (_m, tag: string) => `{hashtag|\\#|${tag.replace(/\\_/g, "_")}}`);
+  // Pull hashtags out first so escaping does not split them (for example "#launch_day").
+  const tags: string[] = [];
+  const marked = text.replace(/#([\p{L}\p{N}_]+)/gu, (_m, tag: string) => `\u0000${tags.push(tag) - 1}\u0000`);
+  const escaped = marked.replace(/[\\|{}@[\]()<>#*_~]/g, (c) => `\\${c}`);
+  return escaped.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => `{hashtag|\\#|${tags[Number(i)]}}`);
 }
 
 async function uploadImage(token: string, owner: string, item: MediaItem): Promise<string> {

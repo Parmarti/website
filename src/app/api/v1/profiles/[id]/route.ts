@@ -16,7 +16,7 @@ export const GET = apiRoute<{ id: string }>(async (_req, { user, params }) => js
 export const PATCH = apiRoute<{ id: string }>(async (req, { user, params }) => {
   await load(user.id, params.id);
   const body = schema.parse(await readJson(req));
-  const profile = await db.profile.update({ where: { id: params.id }, data: body });
+  const profile = await db.profile.update({ where: { id: params.id }, data: body, include: { _count: { select: { accounts: true } } } });
   return json({ profile: serializeProfile(profile) });
 });
 

@@ -7,11 +7,16 @@ export function envPrefix(platform: PlatformId): string {
   return platform.toUpperCase();
 }
 
+const GOOGLE_PLATFORMS: PlatformId[] = ["youtube", "googlebusiness"];
+
 export function sharedAppCredentials(platform: PlatformId): AppCredentials | null {
-  const prefix = envPrefix(platform);
-  const clientId = process.env[`${prefix}_CLIENT_ID`];
-  const clientSecret = process.env[`${prefix}_CLIENT_SECRET`];
-  return clientId && clientSecret ? { clientId, clientSecret } : null;
+  const prefixes = [envPrefix(platform), ...(GOOGLE_PLATFORMS.includes(platform) ? ["GOOGLE"] : [])];
+  for (const prefix of prefixes) {
+    const clientId = process.env[`${prefix}_CLIENT_ID`];
+    const clientSecret = process.env[`${prefix}_CLIENT_SECRET`];
+    if (clientId && clientSecret) return { clientId, clientSecret };
+  }
+  return null;
 }
 
 /** The customer's own app if they configured one, otherwise the shared app from env. */

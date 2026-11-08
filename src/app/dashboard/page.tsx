@@ -72,6 +72,16 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     "publishNow": true
   }'`}</CodeBlock>
       </Card>
+
+      <Card className="p-5">
+        <h2 className="font-semibold">Use it from an AI agent</h2>
+        <p className="mt-1 text-sm text-muted">
+          Add {brand.name} as an MCP server in Claude, Cursor or any MCP client. Your agent can then list accounts, post, schedule and check results.{" "}
+          <Link href="/docs#mcp" className="text-brand">Setup guide</Link>
+        </p>
+        <CodeBlock className="mt-3">{`claude mcp add --transport http ${brand.name.toLowerCase()} ${base}/api/mcp \\
+  --header "Authorization: Bearer ${brand.apiKeyPrefix}..."`}</CodeBlock>
+      </Card>
     </div>
   );
 }

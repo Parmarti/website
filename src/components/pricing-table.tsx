@@ -15,7 +15,7 @@ export function PricingTable() {
           <ul className="mt-5 flex-1 space-y-2 text-sm text-ink-2">
             <li>✓ {p.accounts} connected accounts</li>
             <li>✓ {p.postsPerMonth ? `${p.postsPerMonth} posts per month` : "Unlimited posts"}</li>
-            <li>✓ All 13 networks</li>
+            <li>✓ All 14 networks</li>
             <li>✓ Scheduling, webhooks, profiles</li>
             <li>✓ Bring your own developer apps</li>
           </ul>

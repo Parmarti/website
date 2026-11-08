@@ -57,7 +57,7 @@ export async function postsThisMonth(userId: string) {
   return db.post.count({ where: { userId, createdAt: { gte: start } } });
 }
 
-export async function createPost(user: User, raw: unknown, source: "api" | "dashboard" = "api") {
+export async function createPost(user: User, raw: unknown, source: "api" | "dashboard" = "api", idempotencyKey?: string | null) {
   const input = createPostSchema.parse(raw);
   const plan = getPlan(user.plan);
 
@@ -124,6 +124,7 @@ export async function createPost(user: User, raw: unknown, source: "api" | "dash
       status: input.isDraft ? "draft" : "scheduled",
       source,
       externalId: input.externalId ?? null,
+      idempotencyKey: idempotencyKey ?? null,
       targets: {
         create: input.platforms.map((t) => ({
           socialAccountId: t.accountId,

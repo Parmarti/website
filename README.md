@@ -1,9 +1,9 @@
 # Fanout
 
-A unified social media API. Connect your users' accounts once, then publish and schedule posts to 13 networks with one request.
+A unified social media API. Connect your users' accounts once, then publish and schedule posts to 14 networks with one request.
 
 - **Stack:** Next.js 15 (App Router), TypeScript, Prisma, PostgreSQL, Tailwind CSS 4, Stripe.
-- **Networks:** X, LinkedIn, Facebook Pages, Instagram, Threads, TikTok, YouTube, Pinterest, Reddit, Bluesky, Mastodon, Telegram, Discord.
+- **Networks:** X, LinkedIn, Facebook Pages, Instagram, Threads, TikTok, YouTube, Pinterest, Reddit, Google Business, Bluesky, Mastodon, Telegram, Discord.
 - **Launch steps:** see [LAUNCH.md](./LAUNCH.md).
 
 ## Code map
@@ -20,6 +20,11 @@ A unified social media API. Connect your users' accounts once, then publish and 
 | `src/app/(site)/*` | Landing page, pricing, docs, legal pages |
 | `src/lib/plans.ts` | Plans, prices and limits |
 | `src/lib/brand.ts` | Product name and contact email |
+| `src/lib/mcp.ts`, `src/app/api/mcp` | Remote MCP server for AI agents |
+| `src/lib/openapi.ts` | OpenAPI 3.1 spec served at `/openapi.json` |
+| `sdks/node`, `sdks/python` | Client SDKs (no dependencies) |
+| `integrations/n8n` | n8n community node (action + trigger) |
+| `tests/` | Contract tests for every network adapter (`npm test`) |
 
 ## Run locally
 
