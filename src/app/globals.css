@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0b0d12;
+  --color-ink-2: #3a3f4b;
+  --color-muted: #6b7280;
+  --color-line: #e6e8ee;
+  --color-paper: #ffffff;
+  --color-wash: #f6f7fb;
+  --color-brand: #4f46e5;
+  --color-brand-2: #7c3aed;
+  --color-ok: #059669;
+  --color-warn: #d97706;
+  --color-bad: #dc2626;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body { background: var(--color-paper); color: var(--color-ink); }
+
+.code-block { background: #0f1117; color: #e6e8ee; }
+.code-block .k { color: #c4b5fd; }
+.code-block .s { color: #86efac; }
+.code-block .c { color: #6b7280; }
+
+.prose-docs h2 { font-size: 1.5rem; font-weight: 700; margin-top: 2.5rem; margin-bottom: .75rem; scroll-margin-top: 5rem; }
+.prose-docs h3 { font-size: 1.1rem; font-weight: 600; margin-top: 1.75rem; margin-bottom: .5rem; scroll-margin-top: 5rem; }
+.prose-docs p, .prose-docs li { color: var(--color-ink-2); line-height: 1.7; }
+.prose-docs p { margin: .6rem 0; }
+.prose-docs ul { list-style: disc; padding-left: 1.25rem; margin: .5rem 0; }
+.prose-docs code:not(pre code) { background: var(--color-wash); border: 1px solid var(--color-line); border-radius: 4px; padding: 0 4px; font-size: .9em; }
+.prose-docs table { width: 100%; border-collapse: collapse; margin: .75rem 0; font-size: .9rem; }
+.prose-docs th, .prose-docs td { border-bottom: 1px solid var(--color-line); padding: .45rem .5rem; text-align: left; vertical-align: top; }
+.prose-docs th { color: var(--color-muted); font-weight: 600; }
+.prose-docs table { display: block; overflow-x: auto; }
+.prose-docs code { overflow-wrap: anywhere; }

@@ -1,0 +1,38 @@
+{
+  "name": "fanout",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "worker": "tsx scripts/worker.ts",
+    "typecheck": "tsc --noEmit",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate deploy",
+    "postinstall": "prisma generate",
+    "start:prod": "prisma migrate deploy && next start -p ${PORT:-3000}"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "bcryptjs": "3.0.3",
+    "date-fns": "4.1.0",
+    "date-fns-tz": "3.2.0",
+    "next": "15.5.29",
+    "react": "19.1.10",
+    "react-dom": "19.1.10",
+    "server-only": "^0.0.1",
+    "stripe": "18.5.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.1.18",
+    "@types/node": "22.20.5",
+    "@types/react": "19.1.17",
+    "@types/react-dom": "19.1.11",
+    "prisma": "6.19.3",
+    "tailwindcss": "4.1.18",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  }
+}

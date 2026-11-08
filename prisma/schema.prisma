@@ -1,0 +1,188 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String    @id @default(cuid())
+  email                String    @unique
+  name                 String?
+  passwordHash         String
+  plan                 String    @default("free")
+  stripeCustomerId     String?   @unique
+  stripeSubscriptionId String?   @unique
+  subscriptionStatus   String?
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  sessions     Session[]
+  apiKeys      ApiKey[]
+  profiles     Profile[]
+  accounts     SocialAccount[]
+  platformApps PlatformApp[]
+  oauthStates  OAuthState[]
+  posts        Post[]
+  webhooks     Webhook[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  prefix     String
+  keyHash    String    @unique
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// A profile groups the social accounts of one end customer / brand.
+model Profile {
+  id          String          @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  createdAt   DateTime        @default(now())
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts    SocialAccount[]
+  posts       Post[]
+
+  @@index([userId])
+}
+
+/// "Bring your own developer app" credentials for a platform.
+model PlatformApp {
+  id           String          @id @default(cuid())
+  userId       String
+  platform     String
+  clientId     String
+  clientSecret String /// encrypted
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts     SocialAccount[]
+
+  @@unique([userId, platform])
+}
+
+model SocialAccount {
+  id                String       @id @default(cuid())
+  userId            String
+  profileId         String
+  platform          String
+  platformAccountId String
+  username          String?
+  displayName       String?
+  avatarUrl         String?
+  accessToken       String? /// encrypted
+  refreshToken      String? /// encrypted
+  tokenExpiresAt    DateTime?
+  credentials       String? /// encrypted JSON for credential based platforms
+  metadata          Json?
+  status            String       @default("active") /// active | expired | error
+  lastError         String?
+  platformAppId     String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile           Profile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  platformApp       PlatformApp? @relation(fields: [platformAppId], references: [id], onDelete: SetNull)
+  targets           PostTarget[]
+
+  @@unique([profileId, platform, platformAccountId])
+  @@index([userId])
+}
+
+model OAuthState {
+  id            String   @id @default(cuid())
+  state         String   @unique
+  userId        String
+  profileId     String
+  platform      String
+  codeVerifier  String?
+  redirectUrl   String?
+  platformAppId String?
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Post {
+  id           String       @id @default(cuid())
+  userId       String
+  profileId    String?
+  content      String
+  mediaItems   Json         @default("[]")
+  scheduledFor DateTime
+  timezone     String       @default("UTC")
+  status       String       @default("scheduled") /// draft | scheduled | publishing | published | partial | failed | cancelled
+  source       String       @default("api")
+  externalId   String?
+  publishedAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile      Profile?     @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  targets      PostTarget[]
+
+  @@index([userId, createdAt])
+  @@index([status, scheduledFor])
+}
+
+model PostTarget {
+  id                   String        @id @default(cuid())
+  postId               String
+  socialAccountId      String?
+  platform             String
+  content              String?
+  platformSpecificData Json?
+  status               String        @default("pending") /// pending | publishing | published | failed | cancelled
+  platformPostId       String?
+  platformPostUrl      String?
+  error                String?
+  attempts             Int           @default(0)
+  nextAttemptAt        DateTime?
+  publishedAt          DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  post                 Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  socialAccount        SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
+
+  @@index([postId])
+  @@index([status, nextAttemptAt])
+}
+
+model Webhook {
+  id            String    @id @default(cuid())
+  userId        String
+  url           String
+  secret        String
+  events        String[]
+  active        Boolean   @default(true)
+  lastStatus    Int?
+  lastError     String?
+  lastDelivered DateTime?
+  createdAt     DateTime  @default(now())
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
