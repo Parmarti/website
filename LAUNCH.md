@@ -43,12 +43,17 @@ Check the competitor's current prices before you publish any comparison. Do not 
 | OpenAPI 3.1 spec (`/openapi.json`) | Done, validated |
 | Node.js and Python SDKs (`sdks/`) | Done, 25 + 23 tests pass |
 | n8n community node with trigger (`integrations/n8n`) | Done, 10 tests pass, not yet tried in a live n8n |
-| Contract tests for all 14 network adapters (`npm test`) | 42 tests pass |
+| Analytics: post metrics, follower growth, dashboard, API, MCP and SDK support | Done, tested (see below) |
+| Contract tests for all network adapters and metrics collectors (`npm test`) | 80 tests pass |
 | 14 networks: X, LinkedIn, Facebook Pages, Instagram, Threads, TikTok, YouTube, Pinterest, Reddit, Google Business, Bluesky, Mastodon, Telegram, Discord | Code done; see note below |
 
 **Important:** this sandbox cannot reach the real social networks. The full publish flow was tested end to end against a local mock server (44 automated checks pass). Each network's real API must be tested once with a real account after you deploy. Start with the "works today" networks in section 4.
 
-**Not built yet (roadmap, sell as "coming soon"):** analytics, inbox (comments and DMs), ads, WhatsApp, Snapchat, file upload endpoint (media is sent as public URLs), team members, password reset email (users email support for now).
+**Analytics coverage:** post metrics from X, Facebook, Instagram, Threads, TikTok, YouTube, Pinterest, Reddit, Bluesky and Mastodon; follower counts from those plus Telegram. LinkedIn (needs Community Management API approval), Discord and Google Business do not report post metrics. Analytics added new permissions to the Meta, TikTok and Reddit apps (`read_insights`, `instagram_business_manage_insights`, `threads_manage_insights`, `video.list`, `user.info.stats`, `read`): include them in your app reviews. Accounts connected before this change must reconnect to get views and reach.
+
+To demo the dashboard with sample data on a local or staging database: `npx tsx scripts/dev-seed-analytics.ts you@example.com`.
+
+**Not built yet (roadmap, sell as "coming soon"):** inbox (comments and DMs), ads, WhatsApp, Snapchat, file upload endpoint (media is sent as public URLs), team members, password reset email (users email support for now).
 
 ---
 

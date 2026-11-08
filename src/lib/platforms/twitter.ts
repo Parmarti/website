@@ -1,5 +1,5 @@
-import type { OAuthAdapter, MediaItem } from "./types";
-import { PlatformError, basicAuth, downloadMedia, expiresIn, fetchJson, form, sleep } from "./http";
+import type { OAuthAdapter, MediaItem, PostMetrics } from "./types";
+import { PlatformError, basicAuth, downloadMedia, expiresIn, fetchJson, form, num, sleep } from "./http";
 
 const API = "https://api.x.com/2";
 const SCOPES = ["tweet.read", "tweet.write", "users.read", "offline.access", "media.write"];
@@ -190,5 +190,36 @@ export const twitterAdapter: OAuthAdapter = {
 
     const handle = ctx.account.username || "i";
     return { platformPostId: firstId, url: `https://x.com/${handle}/status/${firstId}` };
+  },
+  analytics: {
+    postBatchSize: 100,
+    note: "Reads public metrics with tweet.read. Each read counts toward your X API usage.",
+    async fetchPostMetrics(ctx, ids) {
+      const res = await fetchJson<any>(`${API}/tweets?${new URLSearchParams({ ids: ids.join(","), "tweet.fields": "public_metrics" })}`, {
+        headers: { Authorization: `Bearer ${ctx.accessToken}` },
+        label: "X post metrics",
+      });
+      const out: Record<string, PostMetrics> = {};
+      for (const t of res?.data ?? []) {
+        const m = t.public_metrics ?? {};
+        out[String(t.id)] = {
+          impressions: num(m.impression_count),
+          likes: num(m.like_count),
+          comments: num(m.reply_count),
+          shares: num(m.retweet_count),
+          quotes: num(m.quote_count),
+          saves: num(m.bookmark_count),
+        };
+      }
+      return out;
+    },
+    async fetchAccountMetrics(ctx) {
+      const res = await fetchJson<any>(`${API}/users/me?user.fields=public_metrics`, {
+        headers: { Authorization: `Bearer ${ctx.accessToken}` },
+        label: "X account metrics",
+      });
+      const m = res?.data?.public_metrics ?? {};
+      return { followers: num(m.followers_count), following: num(m.following_count), posts: num(m.tweet_count) };
+    },
   },
 };

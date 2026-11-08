@@ -193,4 +193,7 @@ export const googleBusinessAdapter: OAuthAdapter = {
     }
     return { platformPostId: post.name, url: post.searchUrl ?? (ctx.account.metadata.mapsUri as string | null) ?? null };
   },
+  analytics: {
+    note: "Google no longer reports metrics for Business Profile posts.",
+  },
 };

@@ -1,9 +1,9 @@
-import type { OAuthAdapter } from "./types";
+import type { AccountMetrics, OAuthAdapter, PostMetrics } from "./types";
 import { expiresIn, form, graphemeLength, PlatformError, str } from "./http";
-import { metaJson, requireToken, waitForMetaContainer } from "./facebook";
+import { insightValue, isMetaNotFound, metaJson, requireToken, waitForMetaContainer } from "./facebook";
 
 const API = "https://graph.threads.net/v1.0";
-const SCOPES = ["threads_basic", "threads_content_publish"];
+const SCOPES = ["threads_basic", "threads_content_publish", "threads_manage_insights"];
 const MAX_CHARS = 500;
 
 export const threadsAdapter: OAuthAdapter = {
@@ -179,5 +179,46 @@ export const threadsAdapter: OAuthAdapter = {
     }
 
     return { platformPostId: postId, url };
+  },
+
+  analytics: {
+    postBatchSize: 1,
+    note: "Needs threads_manage_insights; accounts connected before analytics launched must reconnect. Follower counts need the Threads profile to be linked to Instagram.",
+
+    async fetchPostMetrics(ctx, ids) {
+      const token = requireToken(ctx, "Threads");
+      const out: Record<string, PostMetrics> = {};
+      for (const id of ids) {
+        let res: { data?: unknown };
+        try {
+          res = await metaJson(`${API}/${id}/insights?${new URLSearchParams({ metric: "views,likes,replies,reposts,quotes,shares", access_token: token })}`, {
+            label: "Threads post insights",
+          });
+        } catch (err) {
+          if (isMetaNotFound(err)) continue;
+          throw err;
+        }
+        const reposts = insightValue(res.data, "reposts");
+        const shares = insightValue(res.data, "shares");
+        out[id] = {
+          views: insightValue(res.data, "views"),
+          likes: insightValue(res.data, "likes"),
+          comments: insightValue(res.data, "replies"),
+          // Reposts and shares (sent off Threads) both spread the post, so they are counted together as shares.
+          shares: reposts === null && shares === null ? null : (reposts ?? 0) + (shares ?? 0),
+          quotes: insightValue(res.data, "quotes"),
+        };
+      }
+      return out;
+    },
+
+    async fetchAccountMetrics(ctx): Promise<AccountMetrics> {
+      const token = requireToken(ctx, "Threads");
+      const res = await metaJson<{ data?: unknown }>(
+        `${API}/${ctx.account.platformAccountId}/threads_insights?${new URLSearchParams({ metric: "followers_count", access_token: token })}`,
+        { label: "Threads account insights" },
+      );
+      return { followers: insightValue(res.data, "followers_count") };
+    },
   },
 };

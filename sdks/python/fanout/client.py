@@ -59,6 +59,7 @@ class Fanout:
         self.platforms = Platforms(self)
         self.webhooks = Webhooks(self)
         self.usage = UsageResource(self)
+        self.analytics = Analytics(self)
 
     def _request(
         self,
@@ -291,3 +292,65 @@ class Webhooks(_Resource):
 class UsageResource(_Resource):
     def get(self) -> JSON:
         return self._client._request("GET", "/usage")
+
+
+DateLike = Union[str, datetime]
+
+
+def _date_param(value: Optional[DateLike]) -> Optional[str]:
+    if value is None:
+        return None
+    return value.isoformat() if isinstance(value, datetime) else str(value)
+
+
+class Analytics(_Resource):
+    """Post metrics and follower growth.
+
+    engagements = likes + comments + shares + saves + quotes.
+    engagementRate = engagements / (impressions, else views, else reach), as a fraction (0.0425 = 4.25%).
+    """
+
+    def overview(
+        self,
+        from_: Optional[DateLike] = None,
+        to: Optional[DateLike] = None,
+        days: Optional[int] = None,
+        profile_id: Optional[str] = None,
+        platform: Optional[str] = None,
+        account_id: Optional[str] = None,
+        timezone: Optional[str] = None,
+    ) -> JSON:
+        """Totals, per-network breakdown, daily series, top posts and follower growth.
+
+        from_ / to: ISO date ("2026-10-01", whole day) or date-time, or a datetime. Default: the last `days` (30).
+        timezone: IANA time zone for the daily buckets (default UTC).
+        """
+        query = {
+            "from": _date_param(from_),
+            "to": _date_param(to),
+            "days": days,
+            "profileId": profile_id,
+            "platform": platform,
+            "accountId": account_id,
+            "timezone": timezone,
+        }
+        return self._client._request("GET", "/analytics", query=query)
+
+    def post(self, post_id: str) -> JSON:
+        """Latest metrics and history of one post, per account."""
+        return self._client._request("GET", f"/analytics/posts/{_quote(post_id)}")
+
+    def refresh_post(self, post_id: str) -> JSON:
+        """Ask for fresh metrics now: {"queued": n}. Targets updated in the last 5 minutes are skipped."""
+        return self._client._request("POST", f"/analytics/posts/{_quote(post_id)}/refresh")
+
+    def account(
+        self,
+        account_id: str,
+        from_: Optional[DateLike] = None,
+        to: Optional[DateLike] = None,
+        days: Optional[int] = None,
+    ) -> JSON:
+        """Daily follower history of one account."""
+        query = {"from": _date_param(from_), "to": _date_param(to), "days": days}
+        return self._client._request("GET", f"/analytics/accounts/{_quote(account_id)}", query=query)

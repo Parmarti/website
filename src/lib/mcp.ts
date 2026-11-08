@@ -12,6 +12,7 @@ import { sharedAppCredentials } from "./platform-apps";
 import { createPost, cancelPost, retryPost, postsThisMonth, PostValidationError } from "./posts";
 import { startConnect, LimitError } from "./accounts";
 import { serializeAccount, serializePost, serializeProfile } from "./serializers";
+import { getOverview, getPostAnalytics, parseRange } from "./analytics";
 
 export const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -197,6 +198,42 @@ function tools(ctx: McpContext): Tool[] {
             mediaRequired: Boolean(p.requiresMedia),
           })),
         };
+      },
+    },
+    {
+      name: "get_analytics",
+      title: "Get analytics overview",
+      description:
+        "Totals, per-network breakdown, daily engagements, top posts and follower changes for posts published in a period. Engagements = likes + comments + shares + saves + quotes; engagementRate = engagements / impressions (or views or reach).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          days: { type: "integer", minimum: 1, maximum: 366, description: "Look back this many days (default 30)" },
+          from: str("Start date, YYYY-MM-DD (overrides days)"),
+          to: str("End date, YYYY-MM-DD (default today)"),
+          platform: str("Only this network", { enum: [...PLATFORM_IDS] }),
+          profileId: str("Only this profile"),
+          accountId: str("Only this account"),
+        },
+      },
+      annotations: { readOnlyHint: true },
+      async run(user, a) {
+        const range = parseRange({ days: a.days ? String(a.days) : undefined, from: a.from, to: a.to });
+        const overview = await getOverview(user.id, { ...range, platform: a.platform ?? null, profileId: a.profileId ?? null, accountId: a.accountId ?? null });
+        // Keep the answer compact for the model: drop empty days.
+        return { ...overview, daily: overview.daily.filter((d) => d.posts > 0) };
+      },
+    },
+    {
+      name: "get_post_analytics",
+      title: "Get analytics for one post",
+      description: "Metrics for each network a post went to (views, likes, comments, shares...), with history and when they were last updated.",
+      inputSchema: { type: "object", required: ["postId"], properties: { postId: str("Post id") } },
+      annotations: { readOnlyHint: true },
+      async run(user, a) {
+        const result = await getPostAnalytics(user.id, a.postId);
+        if (!result) throw new ToolError("Post not found.");
+        return { ...result, platforms: result.platforms.map((p) => ({ ...p, history: p.history.slice(-10) })) };
       },
     },
     {

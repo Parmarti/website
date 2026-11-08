@@ -11,6 +11,7 @@ const features = [
   { title: "Hosted account connection", body: "Ask our API for a connect link, send your user there, and get an accountId back on your redirect URL. We handle OAuth, PKCE, token refresh and encryption." },
   { title: "Scheduling that keeps its promise", body: "Schedule in any IANA time zone. A queue with row-level locking, automatic retries with backoff, and clear per-network errors when a post cannot go out." },
   { title: "Webhooks for every outcome", body: "Get signed webhooks when a post is published, partly published or failed, and when a user's account is connected or needs to reconnect." },
+  { title: "Analytics in the same API", body: "Views, likes, comments, shares and follower growth from every network that reports them, collected automatically and normalized into one format." },
   { title: "Profiles for each customer", body: "Group accounts by customer or brand. Perfect for agencies and SaaS products that manage many end users from one API key." },
   { title: "Bring your own developer app", body: "Plug in your own X, Meta, TikTok or Google app credentials. Your brand on the consent screen, your rate limits, your platform fees, no pass-through markup." },
 ];

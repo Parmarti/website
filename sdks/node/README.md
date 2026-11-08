@@ -78,6 +78,21 @@ for await (const p of fanout.posts.iterate({ status: "failed" })) {
 }
 ```
 
+## Analytics
+
+Metrics are collected from each network on a schedule (often for new posts, then less often, for 90 days).
+`engagements` = likes + comments + shares + saves + quotes; `engagementRate` = engagements / (impressions, else views, else reach).
+
+```ts
+const overview = await fanout.analytics.overview({ days: 30, platform: "instagram", timezone: "Europe/Madrid" });
+console.log(overview.totals.engagements, overview.totals.engagementRate); // e.g. 1520, 0.034
+for (const p of overview.topPosts) console.log(p.platform, p.engagements, p.url);
+
+const stats = await fanout.analytics.post(post.id); // per-network metrics and history
+await fanout.analytics.refreshPost(post.id);         // ask for fresh numbers now
+const followers = await fanout.analytics.account("acc_123", { days: 90 });
+```
+
 ## Connect your users' accounts
 
 ```ts
@@ -181,6 +196,7 @@ app.post("/webhooks/fanout", express.raw({ type: "application/json" }), (req, re
 | `platforms` | `list()` |
 | `webhooks` | `list()`, `create({ url, events? })`, `delete(id)`, `test(id)` |
 | `usage` | `get()` |
+| `analytics` | `overview({ from?, to?, days?, profileId?, platform?, accountId?, timezone? })`, `post(id)`, `refreshPost(id)`, `account(id, { from?, to?, days? })` |
 
 Methods return the resource itself (for example `posts.get` returns a `Post`, not `{ post }`). The full OpenAPI spec is served at `/openapi.json` on your API domain.
 

@@ -1,5 +1,5 @@
-import type { OAuthAdapter, TokenSet } from "./types";
-import { PlatformError, bool, downloadMedia, expiresIn, fetchJson, form, sleep, str } from "./http";
+import type { AccountMetrics, OAuthAdapter, PostMetrics, TokenSet } from "./types";
+import { PlatformError, bool, chunk, downloadMedia, expiresIn, fetchJson, form, num, sleep, str } from "./http";
 
 const API = "https://open.tiktokapis.com";
 const TOKEN_URL = `${API}/v2/oauth/token/`;
@@ -53,6 +53,19 @@ async function tokenRequest(data: Record<string, string>, label: string): Promis
   return token;
 }
 
+/** A missing analytics scope must not mark the account as disconnected: posting still works. */
+async function withoutScopeAuth<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const code = err instanceof PlatformError ? (err.opts.body as any)?.error?.code : undefined;
+    if (code === "scope_not_authorized" || code === "token_not_authorized_for_specified_scope") {
+      throw new PlatformError(`${err instanceof Error ? err.message : code}. Reconnect the account to grant analytics access.`, { auth: false });
+    }
+    throw err;
+  }
+}
+
 export const tiktokAdapter: OAuthAdapter = {
   id: "tiktok",
   name: "TikTok",
@@ -78,7 +91,7 @@ export const tiktokAdapter: OAuthAdapter = {
   getAuthUrl({ app, redirectUri, state }) {
     const params = new URLSearchParams({
       client_key: app.clientId,
-      scope: "user.info.basic,video.publish,video.upload",
+      scope: "user.info.basic,user.info.stats,video.publish,video.upload,video.list",
       response_type: "code",
       redirect_uri: redirectUri,
       state,
@@ -243,5 +256,40 @@ export const tiktokAdapter: OAuthAdapter = {
     }
     // Upload succeeded but processing is still running; report the publish id so the post is not re-uploaded.
     return { platformPostId: publishId, url: null };
+  },
+
+  analytics: {
+    postBatchSize: 20,
+    note: "Needs the video.list and user.info.stats scopes; accounts connected before analytics launched must reconnect. Private (SELF_ONLY) and still-processing posts have no public id, so they cannot be measured.",
+
+    async fetchPostMetrics({ accessToken }, ids) {
+      if (!accessToken) throw new PlatformError("TikTok account has no access token.", { auth: true });
+      // Only public video ids are numeric; publish_id fallbacks (e.g. "v_pub_...") cannot be queried.
+      const queryable = ids.filter((id) => /^\d+$/.test(id));
+      const out: Record<string, PostMetrics> = {};
+      for (const batch of chunk(queryable, 20)) {
+        const res = await withoutScopeAuth(() =>
+          tiktokPost<any>("/v2/video/query/?fields=id,view_count,like_count,comment_count,share_count", accessToken, { filters: { video_ids: batch } }, "TikTok video metrics"),
+        );
+        for (const v of res?.data?.videos ?? []) {
+          out[String(v.id)] = { views: num(v.view_count), likes: num(v.like_count), comments: num(v.comment_count), shares: num(v.share_count) };
+        }
+      }
+      return out;
+    },
+
+    async fetchAccountMetrics({ accessToken }): Promise<AccountMetrics> {
+      if (!accessToken) throw new PlatformError("TikTok account has no access token.", { auth: true });
+      const info = await withoutScopeAuth(async () => {
+        const res = await fetchJson<any>(`${API}/v2/user/info/?fields=follower_count,following_count,video_count`, {
+          label: "TikTok account metrics",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        checkTikTokError(res, "TikTok account metrics");
+        return res;
+      });
+      const user = info?.data?.user ?? {};
+      return { followers: num(user.follower_count), following: num(user.following_count), posts: num(user.video_count) };
+    },
   },
 };

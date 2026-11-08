@@ -101,15 +101,35 @@ model SocialAccount {
   status            String       @default("active") /// active | expired | error
   lastError         String?
   platformAppId     String?
+  /// Latest audience numbers, refreshed daily.
+  followers         Int?
+  metricsNextAt     DateTime?
+  metricsError      String?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
   user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   profile           Profile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
   platformApp       PlatformApp? @relation(fields: [platformAppId], references: [id], onDelete: SetNull)
   targets           PostTarget[]
+  snapshots         AccountSnapshot[]
 
   @@unique([profileId, platform, platformAccountId])
   @@index([userId])
+  @@index([metricsNextAt])
+}
+
+/// One row per account per day with its audience numbers.
+model AccountSnapshot {
+  id        String        @id @default(cuid())
+  accountId String
+  date      DateTime      @db.Date
+  followers Int?
+  following Int?
+  posts     Int?
+  createdAt DateTime      @default(now())
+  account   SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, date])
 }
 
 model OAuthState {
@@ -166,13 +186,31 @@ model PostTarget {
   attempts             Int           @default(0)
   nextAttemptAt        DateTime?
   publishedAt          DateTime?
+  /// Latest metrics (PostMetrics JSON) and collection schedule.
+  metrics              Json?
+  metricsUpdatedAt     DateTime?
+  metricsNextAt        DateTime?
+  metricsError         String?
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
   post                 Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
   socialAccount        SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
+  snapshots            MetricSnapshot[]
 
   @@index([postId])
   @@index([status, nextAttemptAt])
+  @@index([metricsNextAt])
+}
+
+/// Metrics history of one published target, for growth charts.
+model MetricSnapshot {
+  id         String     @id @default(cuid())
+  targetId   String
+  capturedAt DateTime   @default(now())
+  metrics    Json
+  target     PostTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([targetId, capturedAt])
 }
 
 model Webhook {

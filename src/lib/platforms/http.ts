@@ -114,3 +114,16 @@ export function graphemeLength(text: string): number {
   for (const _ of new Seg(undefined, { granularity: "grapheme" }).segment(text)) n++;
   return n;
 }
+
+/** Read a number from API output that may be a number, numeric string, null or missing. */
+export function num(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+export function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}

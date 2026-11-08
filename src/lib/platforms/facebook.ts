@@ -1,10 +1,10 @@
-import type { ConnectedAccount, OAuthAdapter, PublishContext } from "./types";
-import { fetchJson, form, PlatformError, sleep, str } from "./http";
+import type { AccountMetrics, ConnectedAccount, OAuthAdapter, PostMetrics, PublishContext } from "./types";
+import { fetchJson, form, num, PlatformError, sleep, str } from "./http";
 
 const VER = process.env.META_GRAPH_VERSION || "v23.0";
 const GRAPH = `https://graph.facebook.com/${VER}`;
 const GRAPH_VIDEO = `https://graph-video.facebook.com/${VER}`;
-const SCOPES = ["pages_show_list", "pages_manage_posts", "pages_read_engagement", "business_management"];
+const SCOPES = ["pages_show_list", "pages_manage_posts", "pages_read_engagement", "read_insights", "business_management"];
 
 /**
  * fetchJson for Meta Graph APIs (Facebook, Instagram, Threads).
@@ -51,6 +51,38 @@ export async function waitForMetaContainer(
       throw new PlatformError(`${label} media was still processing after ${Math.round(timeoutMs / 1000)}s`, { retryable: true });
     }
     await sleep(5000);
+  }
+}
+
+/** Meta answers "object does not exist" (deleted post, wrong id) with error code 100. */
+export function isMetaNotFound(err: unknown): boolean {
+  if (!(err instanceof PlatformError)) return false;
+  const e = (err.opts.body as any)?.error;
+  return Number(e?.code) === 100 && (Number(e?.error_subcode) === 33 || /does not exist|Unsupported get request/i.test(String(e?.message)));
+}
+
+/**
+ * Read one value from a Meta insights response. Entries look like
+ * { name, values: [{ value }] } or { name, total_value: { value } }.
+ */
+export function insightValue(data: unknown, name: string): number | null {
+  if (!Array.isArray(data)) return null;
+  const entry = data.find((d: any) => d?.name === name) as any;
+  if (!entry) return null;
+  const total = num(entry.total_value?.value);
+  if (total !== null) return total;
+  const values = Array.isArray(entry.values) ? entry.values : [];
+  return values.length ? num(values[values.length - 1]?.value) : null;
+}
+
+/** Best-effort sub-call: insights often fail for missing permissions; keep the basic counts in that case. */
+export async function bestEffort<T>(label: string, fn: () => Promise<T>): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof PlatformError && (err.opts.status === 401 || err.opts.auth)) throw err;
+    console.warn(`[analytics] ${label} skipped:`, (err as Error).message);
+    return null;
   }
 }
 
@@ -209,5 +241,58 @@ export const facebookAdapter: OAuthAdapter = {
     }
 
     return { platformPostId: postId, url };
+  },
+
+  analytics: {
+    postBatchSize: 1,
+    note: "Needs pages_read_engagement and read_insights. Views use Meta's post_media_view metric (impressions were retired). Accounts connected before analytics launched must reconnect.",
+
+    async fetchPostMetrics(ctx, ids) {
+      const token = requireToken(ctx, "Facebook");
+      const out: Record<string, PostMetrics> = {};
+      for (const id of ids) {
+        const isVideo = !id.includes("_");
+        let basic: any;
+        try {
+          basic = await metaJson<any>(
+            `${GRAPH}/${id}?${new URLSearchParams({
+              fields: isVideo
+                ? "likes.summary(total_count).limit(0),comments.summary(total_count).limit(0),views"
+                : "reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),shares",
+              access_token: token,
+            })}`,
+            { label: "Facebook post metrics" },
+          );
+        } catch (err) {
+          if (isMetaNotFound(err)) continue;
+          throw err;
+        }
+        const metrics: PostMetrics = {
+          likes: num(isVideo ? basic.likes?.summary?.total_count : basic.reactions?.summary?.total_count),
+          comments: num(basic.comments?.summary?.total_count),
+          shares: isVideo ? null : num(basic.shares?.count) ?? 0,
+          views: isVideo ? num(basic.views) : null,
+        };
+        if (!isVideo) {
+          const insights = await bestEffort("Facebook post insights", () =>
+            metaJson<{ data?: unknown }>(`${GRAPH}/${id}/insights?${new URLSearchParams({ metric: "post_media_view", access_token: token })}`, {
+              label: "Facebook post insights",
+            }),
+          );
+          if (insights) metrics.views = insightValue(insights.data, "post_media_view");
+        }
+        out[id] = metrics;
+      }
+      return out;
+    },
+
+    async fetchAccountMetrics(ctx): Promise<AccountMetrics> {
+      const token = requireToken(ctx, "Facebook");
+      const page = await metaJson<{ followers_count?: number }>(
+        `${GRAPH}/${ctx.account.platformAccountId}?${new URLSearchParams({ fields: "followers_count", access_token: token })}`,
+        { label: "Facebook page metrics" },
+      );
+      return { followers: num(page.followers_count) };
+    },
   },
 };

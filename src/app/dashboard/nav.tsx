@@ -7,6 +7,7 @@ const items = [
   { href: "/dashboard", label: "Overview" },
   { href: "/dashboard/accounts", label: "Accounts" },
   { href: "/dashboard/posts", label: "Posts" },
+  { href: "/dashboard/analytics", label: "Analytics" },
   { href: "/dashboard/api-keys", label: "API keys" },
   { href: "/dashboard/webhooks", label: "Webhooks" },
   { href: "/dashboard/apps", label: "Developer apps" },

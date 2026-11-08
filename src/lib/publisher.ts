@@ -4,6 +4,7 @@ import { PlatformError } from "./platforms/http";
 import { buildPublishContext, markAccountExpired, refreshExpiringTokens } from "./accounts";
 import { emitEvent } from "./webhooks";
 import { serializePost } from "./serializers";
+import { collectAnalytics, firstMetricsAt } from "./analytics";
 
 const MAX_ATTEMPTS = 3;
 const BACKOFF_MINUTES = [1, 5, 15];
@@ -70,6 +71,7 @@ async function publishTarget(targetId: string) {
         publishedAt: new Date(),
         error: null,
         nextAttemptAt: null,
+        metricsNextAt: firstMetricsAt(account.platform),
       },
     });
     if (account.lastError) await db.socialAccount.update({ where: { id: account.id }, data: { lastError: null } });
@@ -133,10 +135,15 @@ export async function processDuePosts(opts: { maxBatches?: number } = {}) {
 }
 
 let lastRefresh = 0;
+let lastAnalytics = 0;
 
-/** One scheduler tick: publish due posts, and refresh tokens every 30 minutes. */
+/** One scheduler tick: publish due posts, collect metrics every minute, refresh tokens every 30 minutes. */
 export async function schedulerTick() {
   const result = await processDuePosts();
+  if (Date.now() - lastAnalytics > 60_000) {
+    lastAnalytics = Date.now();
+    await collectAnalytics().catch((err) => console.error("[scheduler] analytics failed", err));
+  }
   if (Date.now() - lastRefresh > 30 * 60_000) {
     lastRefresh = Date.now();
     await refreshExpiringTokens().catch((err) => console.error("[scheduler] token refresh failed", err));

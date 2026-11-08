@@ -138,4 +138,12 @@ export const telegramAdapter: CredentialAdapter = {
 
     return { platformPostId: `${chatId}:${firstMessageId}`, url: messageUrl(String(chatId), ctx.account.username, firstMessageId) };
   },
+  analytics: {
+    note: "Telegram does not share post views with bots, so only the subscriber count is tracked.",
+    async fetchAccountMetrics(ctx) {
+      const token = botToken(ctx.credentials);
+      const chatId = ctx.credentials?.chatId || ctx.account.platformAccountId;
+      return { followers: await call<number>(token, "getChatMemberCount", { chat_id: chatId }) };
+    },
+  },
 };

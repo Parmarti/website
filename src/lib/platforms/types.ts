@@ -66,6 +66,35 @@ export interface PublishContext {
   options: Record<string, unknown>;
 }
 
+/** Unified post metrics. A field is null or missing when the network does not report it. */
+export interface PostMetrics {
+  impressions?: number | null;
+  reach?: number | null;
+  views?: number | null;
+  likes?: number | null;
+  comments?: number | null;
+  shares?: number | null;
+  saves?: number | null;
+  clicks?: number | null;
+  quotes?: number | null;
+}
+
+export interface AccountMetrics {
+  followers?: number | null;
+  following?: number | null;
+  posts?: number | null;
+}
+
+export interface AnalyticsSupport {
+  /** How many post ids one fetchPostMetrics call accepts (default 1). */
+  postBatchSize?: number;
+  /** Return metrics keyed by platformPostId. Ids missing from the result are treated as not found. */
+  fetchPostMetrics?(ctx: PublishContext, platformPostIds: string[]): Promise<Record<string, PostMetrics>>;
+  fetchAccountMetrics?(ctx: PublishContext): Promise<AccountMetrics>;
+  /** Plain words shown in the dashboard, e.g. which permission is needed. */
+  note?: string;
+}
+
 export interface PublishResult {
   platformPostId: string;
   url?: string | null;
@@ -86,6 +115,7 @@ interface AdapterBase {
   /** Platform-specific validation. Return a list of human readable problems. */
   validate?(input: { content: string; media: MediaItem[]; options: Record<string, unknown> }): string[];
   publish(ctx: PublishContext): Promise<PublishResult>;
+  analytics?: AnalyticsSupport;
 }
 
 export interface OAuthAdapter extends AdapterBase {

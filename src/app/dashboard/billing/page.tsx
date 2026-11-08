@@ -32,7 +32,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
               <ul className="mt-3 flex-1 space-y-1 text-sm text-ink-2">
                 <li>{p.accounts} connected accounts</li>
                 <li>{p.postsPerMonth ? `${p.postsPerMonth} posts / month` : "Unlimited posts"}</li>
-                <li>All 14 networks, webhooks, API</li>
+                <li>All 14 networks, analytics, webhooks, API</li>
               </ul>
               {p.id !== "free" && !isCurrent ? (
                 <form action={startCheckout} className="mt-4">

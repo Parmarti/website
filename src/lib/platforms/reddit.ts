@@ -1,5 +1,5 @@
-import type { OAuthAdapter, TokenSet } from "./types";
-import { PlatformError, basicAuth, expiresIn, fetchJson, form, str } from "./http";
+import type { AccountMetrics, OAuthAdapter, PostMetrics, TokenSet } from "./types";
+import { PlatformError, basicAuth, chunk, expiresIn, fetchJson, form, num, str } from "./http";
 
 const UA = process.env.REDDIT_USER_AGENT || "web:fanout:0.1 (by /u/fanout)";
 
@@ -63,7 +63,7 @@ export const redditAdapter: OAuthAdapter = {
       state,
       redirect_uri: redirectUri,
       duration: "permanent",
-      scope: "identity submit",
+      scope: "identity submit read",
     });
     return `https://www.reddit.com/api/v1/authorize?${params}`;
   },
@@ -145,5 +145,43 @@ export const redditAdapter: OAuthAdapter = {
     const id = result.name ?? result.id;
     if (!id) throw new PlatformError("Reddit did not return a post id.", { retryable: true });
     return { platformPostId: String(id), url: result.url ?? null };
+  },
+
+  analytics: {
+    postBatchSize: 100,
+    note: "Needs the read scope; accounts connected before analytics launched must reconnect. Likes show the Reddit score (upvotes minus downvotes).",
+
+    async fetchPostMetrics({ accessToken }, ids) {
+      if (!accessToken) throw new PlatformError("Reddit account has no access token.", { auth: true });
+      const out: Record<string, PostMetrics> = {};
+      for (const batch of chunk(ids, 100)) {
+        // /api/info needs fullnames ("t3_<id>"); map them back to the ids we were given.
+        const byFullname = new Map(batch.map((id) => [id.startsWith("t3_") ? id : `t3_${id}`, id]));
+        const res = await fetchJson<any>(`https://oauth.reddit.com/api/info?${new URLSearchParams({ id: [...byFullname.keys()].join(",") })}`, {
+          label: "Reddit post metrics",
+          headers: { Authorization: `Bearer ${accessToken}`, "User-Agent": UA },
+        });
+        for (const child of res?.data?.children ?? []) {
+          const d = child?.data ?? {};
+          const original = byFullname.get(String(d.name));
+          if (!original) continue;
+          out[original] = {
+            likes: num(d.score),
+            comments: num(d.num_comments),
+            views: num(d.view_count),
+          };
+        }
+      }
+      return out;
+    },
+
+    async fetchAccountMetrics({ accessToken }): Promise<AccountMetrics> {
+      if (!accessToken) throw new PlatformError("Reddit account has no access token.", { auth: true });
+      const me = await fetchJson<any>("https://oauth.reddit.com/api/v1/me", {
+        label: "Reddit account metrics",
+        headers: { Authorization: `Bearer ${accessToken}`, "User-Agent": UA },
+      });
+      return { followers: num(me?.subreddit?.subscribers), posts: null };
+    },
   },
 };

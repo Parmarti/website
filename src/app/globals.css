@@ -35,3 +35,15 @@ body { background: var(--color-paper); color: var(--color-ink); }
 .prose-docs th { color: var(--color-muted); font-weight: 600; }
 .prose-docs table { display: block; overflow-x: auto; }
 .prose-docs code { overflow-wrap: anywhere; }
+
+/* Chart tokens (validated: series-1 on white passes band, chroma and 3:1 contrast). */
+.viz-root {
+  --viz-series-1: #2a78d6;
+  --viz-deemph: #c3c2b7;
+  --viz-grid: #e1e0d9;
+  --viz-axis: #c3c2b7;
+  --viz-ink: #0b0b0b;
+  --viz-ink-2: #52514e;
+  --viz-muted: #898781;
+  --viz-surface: #ffffff;
+}

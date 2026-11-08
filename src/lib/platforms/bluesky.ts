@@ -1,8 +1,9 @@
-import type { CredentialAdapter, MediaItem } from "./types";
-import { PlatformError, downloadMedia, fetchJson, graphemeLength, str } from "./http";
+import type { CredentialAdapter, MediaItem, PostMetrics } from "./types";
+import { PlatformError, downloadMedia, fetchJson, graphemeLength, num, str } from "./http";
 import { assertPublicUrl } from "../net";
 
 const DEFAULT_SERVICE = "https://bsky.social";
+const PUBLIC_APPVIEW = "https://public.api.bsky.app";
 const MAX_IMAGE_BYTES = 1_000_000;
 
 interface Session {
@@ -175,5 +176,25 @@ export const blueskyAdapter: CredentialAdapter = {
     });
     const rkey = res.uri.split("/").pop();
     return { platformPostId: res.uri, url: `https://bsky.app/profile/${session.handle}/post/${rkey}` };
+  },
+  analytics: {
+    postBatchSize: 25,
+    note: "Reads public counts from the Bluesky network. No extra permission needed.",
+    async fetchPostMetrics(_ctx, uris) {
+      const params = new URLSearchParams();
+      for (const uri of uris) params.append("uris", uri);
+      const res = await fetchJson<{ posts?: any[] }>(`${PUBLIC_APPVIEW}/xrpc/app.bsky.feed.getPosts?${params}`, { label: "Bluesky post metrics" });
+      const out: Record<string, PostMetrics> = {};
+      for (const p of res.posts ?? []) {
+        out[p.uri] = { likes: num(p.likeCount), shares: num(p.repostCount), comments: num(p.replyCount), quotes: num(p.quoteCount) };
+      }
+      return out;
+    },
+    async fetchAccountMetrics(ctx) {
+      const p = await fetchJson<any>(`${PUBLIC_APPVIEW}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(ctx.account.platformAccountId)}`, {
+        label: "Bluesky profile metrics",
+      });
+      return { followers: num(p.followersCount), following: num(p.followsCount), posts: num(p.postsCount) };
+    },
   },
 };

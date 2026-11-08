@@ -231,6 +231,61 @@ class ClientTest(unittest.TestCase):
         self.assertEqual(ctx.exception.status, 502)
         self.assertEqual(str(ctx.exception), "HTTP 502")
 
+    # --- analytics -----------------------------------------------------------
+
+    def test_analytics_overview_maps_snake_case_params(self):
+        reply("GET /api/v1/analytics", (200, {"totals": {"posts": 1, "engagements": 9, "engagementRate": 0.09}}, {}))
+        res = self.client().analytics.overview(
+            from_=datetime(2026, 10, 1, 0, 0, 0),
+            to="2026-10-31",
+            profile_id="prof_1",
+            platform="bluesky",
+            account_id="acc_1",
+            timezone="Europe/Madrid",
+        )
+        self.assertEqual(res["totals"]["engagementRate"], 0.09)
+        self.assertEqual(self.last()["path"], "/api/v1/analytics")
+        self.assertEqual(
+            self.last()["query"],
+            {
+                "from": "2026-10-01T00:00:00",
+                "to": "2026-10-31",
+                "profileId": "prof_1",
+                "platform": "bluesky",
+                "accountId": "acc_1",
+                "timezone": "Europe/Madrid",
+            },
+        )
+
+    def test_analytics_overview_days_only(self):
+        reply("GET /api/v1/analytics", (200, {"totals": {}}, {}))
+        self.client().analytics.overview(days=7)
+        self.assertEqual(self.last()["query"], {"days": "7"})
+        self.client().analytics.overview()
+        self.assertEqual(self.last()["query"], {})
+
+    def test_analytics_post_refresh_and_account(self):
+        reply("GET /api/v1/analytics/posts/post_1", (200, {"postId": "post_1", "platforms": []}, {}))
+        self.assertEqual(self.client().analytics.post("post_1")["postId"], "post_1")
+        self.assertEqual(self.last()["method"], "GET")
+
+        reply("POST /api/v1/analytics/posts/post_1/refresh", (200, {"queued": 3}, {}))
+        self.assertEqual(self.client().analytics.refresh_post("post_1"), {"queued": 3})
+        self.assertEqual(self.last()["method"], "POST")
+
+        reply("GET /api/v1/analytics/accounts/acc_1", (200, {"accountId": "acc_1", "followers": 50, "series": []}, {}))
+        res = self.client().analytics.account("acc_1", days=90)
+        self.assertEqual(res["followers"], 50)
+        self.assertEqual(self.last()["path"], "/api/v1/analytics/accounts/acc_1")
+        self.assertEqual(self.last()["query"], {"days": "90"})
+
+    def test_analytics_not_found_raises(self):
+        reply("GET /api/v1/analytics/posts/missing", (404, {"error": {"code": "not_found", "message": "Post not found."}}, {}))
+        with self.assertRaises(FanoutError) as ctx:
+            self.client().analytics.post("missing")
+        self.assertEqual(ctx.exception.status, 404)
+        self.assertEqual(ctx.exception.code, "not_found")
+
 
 if __name__ == "__main__":
     unittest.main()

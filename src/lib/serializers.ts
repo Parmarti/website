@@ -12,6 +12,7 @@ export function serializeAccount(a: SocialAccount) {
     status: a.status,
     lastError: a.lastError,
     tokenExpiresAt: a.tokenExpiresAt,
+    followers: a.followers,
     usesOwnApp: Boolean(a.platformAppId),
     metadata: publicMetadata(a.metadata),
     createdAt: a.createdAt,
@@ -39,6 +40,8 @@ export function serializeTarget(t: PostTarget) {
     error: t.error,
     attempts: t.attempts,
     publishedAt: t.publishedAt,
+    metrics: t.metrics ?? null,
+    metricsUpdatedAt: t.metricsUpdatedAt,
     ...(t.content ? { content: t.content } : {}),
     ...(t.platformSpecificData ? { platformSpecificData: t.platformSpecificData } : {}),
   };

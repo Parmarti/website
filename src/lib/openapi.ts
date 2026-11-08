@@ -40,6 +40,25 @@ const commonErrors = {
 
 const notFound = { "404": errorResponse("Not found, or it belongs to another user (`not_found`).") };
 
+const queryParam = (name: string, description: string, schema: Record<string, unknown> = { type: "string" }) => ({
+  name,
+  in: "query",
+  required: false,
+  description,
+  schema,
+});
+
+const rangeParams = [
+  queryParam("from", "Start of the range: ISO date (`2026-10-01`) or date-time. Default: `days` before `to`."),
+  queryParam("to", "End of the range: ISO date (whole day included) or date-time. Default: now."),
+  queryParam("days", "Range length in days when `from` is omitted. Default 30. Ranges are capped at 366 days.", { type: "integer", minimum: 1 }),
+];
+
+const ENGAGEMENT_NOTE =
+  "engagements = likes + comments + shares + saves + quotes (clicks and views are not engagements). engagementRate = engagements / audience, where audience is impressions, else views, else reach; null when no audience number is reported.";
+
+const metricNumber = (description: string) => ({ type: ["number", "null"], description });
+
 const platformOptionsDescription = [
   "Platform-specific options. Free-form object; keys depend on the target platform:",
   "- twitter: threadItems (string[]), replyToId (string), allowLongPost (boolean)",
@@ -79,6 +98,7 @@ export function openApiDocument(baseUrl: string) {
       { name: "Platforms", description: "Supported networks and their limits." },
       { name: "Webhooks", description: "Signed event notifications." },
       { name: "Usage", description: "Plan limits and usage." },
+      { name: "Analytics", description: "Post metrics and follower growth, collected from each network on a schedule." },
     ],
     paths: {
       "/posts": {
@@ -429,6 +449,72 @@ export function openApiDocument(baseUrl: string) {
           },
         },
       },
+      "/analytics": {
+        get: {
+          operationId: "getAnalyticsOverview",
+          tags: ["Analytics"],
+          summary: "Analytics overview",
+          description: `Totals, per-network breakdown, daily series, top posts and follower growth for posts published in the date range. ${ENGAGEMENT_NOTE}`,
+          parameters: [
+            ...rangeParams,
+            queryParam("profileId", "Only accounts in this profile."),
+            queryParam("platform", "Only this network.", ref("PlatformId")),
+            queryParam("accountId", "Only this account."),
+            queryParam("timezone", "IANA time zone used for the daily buckets. Default UTC.", { type: "string", default: "UTC" }),
+          ],
+          responses: {
+            "200": jsonResponse("Analytics overview.", ref("AnalyticsOverview")),
+            "400": errorResponse("Unknown time zone (`validation_error`)."),
+            ...commonErrors,
+          },
+        },
+      },
+      "/analytics/posts/{id}": {
+        get: {
+          operationId: "getPostAnalytics",
+          tags: ["Analytics"],
+          summary: "Metrics of one post",
+          description: `Latest metrics and history for every account the post went to. ${ENGAGEMENT_NOTE}`,
+          parameters: [idParam("Post id.")],
+          responses: {
+            "200": jsonResponse("Post analytics.", ref("PostAnalytics")),
+            ...notFound,
+            ...commonErrors,
+          },
+        },
+      },
+      "/analytics/posts/{id}/refresh": {
+        post: {
+          operationId: "refreshPostAnalytics",
+          tags: ["Analytics"],
+          summary: "Fetch fresh metrics for a post now",
+          description:
+            "Queues the post's published targets for an immediate metrics fetch. Targets updated less than 5 minutes ago are skipped, so `queued` can be 0. Read the result with GET /analytics/posts/{id} a few seconds later.",
+          parameters: [idParam("Post id.")],
+          responses: {
+            "200": jsonResponse(
+              "Number of targets queued.",
+              { type: "object", required: ["queued"], properties: { queued: { type: "integer", minimum: 0 } } },
+            ),
+            ...notFound,
+            ...commonErrors,
+          },
+        },
+      },
+      "/analytics/accounts/{id}": {
+        get: {
+          operationId: "getAccountAnalytics",
+          tags: ["Analytics"],
+          summary: "Follower history of one account",
+          description: "One snapshot per day of followers, following and post count, when the network reports them.",
+          parameters: [idParam("Account id."), ...rangeParams],
+          responses: {
+            "200": jsonResponse("Account analytics.", ref("AccountAnalytics")),
+            ...notFound,
+            ...commonErrors,
+          },
+        },
+      },
     },
     components: {
       securitySchemes: {
@@ -479,7 +565,7 @@ export function openApiDocument(baseUrl: string) {
         },
         PostTarget: {
           type: "object",
-          required: ["id", "platform", "accountId", "status", "platformPostId", "platformPostUrl", "error", "attempts", "publishedAt"],
+          required: ["id", "platform", "accountId", "status", "platformPostId", "platformPostUrl", "error", "attempts", "publishedAt", "metrics", "metricsUpdatedAt"],
           properties: {
             id: { type: "string" },
             platform: ref("PlatformId"),
@@ -490,6 +576,8 @@ export function openApiDocument(baseUrl: string) {
             error: { type: ["string", "null"] },
             attempts: { type: "integer" },
             publishedAt: { type: ["string", "null"], format: "date-time" },
+            metrics: { oneOf: [ref("PostMetrics"), { type: "null" }], description: "Latest metrics from the network. Null until the first collection." },
+            metricsUpdatedAt: { type: ["string", "null"], format: "date-time" },
             content: { type: "string", description: "Present when overridden for this account." },
             platformSpecificData: { type: "object", additionalProperties: true },
           },
@@ -526,6 +614,7 @@ export function openApiDocument(baseUrl: string) {
             status: { type: "string", enum: ["active", "expired", "error"], description: "`expired` means the user must reconnect." },
             lastError: { type: ["string", "null"] },
             tokenExpiresAt: { type: ["string", "null"], format: "date-time" },
+            followers: { type: ["integer", "null"], description: "Latest follower count, when the network reports it." },
             usesOwnApp: { type: "boolean", description: "True when connected through your own developer app." },
             metadata: { type: "object", additionalProperties: true },
             createdAt: { type: "string", format: "date-time" },
@@ -586,6 +675,189 @@ export function openApiDocument(baseUrl: string) {
               type: "object",
               required: ["used", "limit"],
               properties: { used: { type: "integer" }, limit: { type: ["integer", "null"], description: "Null means unlimited." } },
+            },
+          },
+        },
+        PostMetrics: {
+          type: "object",
+          description: "Unified post metrics. A field is missing when the network does not report it.",
+          properties: {
+            impressions: metricNumber("Times the post was shown."),
+            reach: metricNumber("Unique accounts that saw the post."),
+            views: metricNumber("Views (video views, or the network's view metric)."),
+            likes: metricNumber("Likes, reactions, favourites, or the Reddit score."),
+            comments: metricNumber("Comments or replies."),
+            shares: metricNumber("Shares, reposts, retweets or boosts."),
+            saves: metricNumber("Saves or bookmarks."),
+            clicks: metricNumber("Link and post clicks."),
+            quotes: metricNumber("Quote posts."),
+          },
+        },
+        AnalyticsTotals: {
+          type: "object",
+          description: `Sums over published targets. A metric is null when no target reported it. ${ENGAGEMENT_NOTE}`,
+          required: ["posts", "engagements", "engagementRate", "audience", "impressions", "reach", "views", "likes", "comments", "shares", "saves", "clicks", "quotes"],
+          properties: {
+            posts: { type: "integer", description: "Published targets (one per account a post went to)." },
+            engagements: { type: "number" },
+            audience: { type: ["number", "null"], description: "Per target impressions, else views, else reach, summed. The denominator of engagementRate." },
+            engagementRate: { type: ["number", "null"], description: "Fraction, e.g. 0.0425 = 4.25%." },
+            impressions: { type: ["number", "null"] },
+            reach: { type: ["number", "null"] },
+            views: { type: ["number", "null"] },
+            likes: { type: ["number", "null"] },
+            comments: { type: ["number", "null"] },
+            shares: { type: ["number", "null"] },
+            saves: { type: ["number", "null"] },
+            clicks: { type: ["number", "null"] },
+            quotes: { type: ["number", "null"] },
+          },
+        },
+        AnalyticsOverview: {
+          type: "object",
+          required: ["range", "totals", "coverage", "byPlatform", "daily", "topPosts", "accounts"],
+          properties: {
+            range: {
+              type: "object",
+              required: ["from", "to", "timezone"],
+              properties: { from: { type: "string", format: "date-time" }, to: { type: "string", format: "date-time" }, timezone: { type: "string" } },
+            },
+            totals: ref("AnalyticsTotals"),
+            coverage: {
+              type: "object",
+              description: "How many published targets in the range already have metrics.",
+              required: ["posts", "withMetrics"],
+              properties: { posts: { type: "integer" }, withMetrics: { type: "integer" } },
+            },
+            byPlatform: {
+              type: "array",
+              description: "Totals per network, most engagements first.",
+              items: { allOf: [ref("AnalyticsTotals"), { type: "object", required: ["platform"], properties: { platform: ref("PlatformId") } }] },
+            },
+            daily: {
+              type: "array",
+              description: "One entry per day in the range (by publish date, in `timezone`). Missing metrics count as 0 here.",
+              items: {
+                type: "object",
+                required: ["date", "posts", "engagements", "impressions", "views"],
+                properties: {
+                  date: { type: "string", format: "date" },
+                  posts: { type: "integer" },
+                  engagements: { type: "number" },
+                  impressions: { type: "number" },
+                  views: { type: "number" },
+                },
+              },
+            },
+            topPosts: {
+              type: "array",
+              description: "Up to 10 published targets with metrics, most engagements first.",
+              items: {
+                type: "object",
+                required: ["postId", "targetId", "platform", "accountId", "content", "url", "publishedAt", "metrics", "engagements", "engagementRate"],
+                properties: {
+                  postId: { type: "string" },
+                  targetId: { type: "string" },
+                  platform: ref("PlatformId"),
+                  accountId: { type: ["string", "null"] },
+                  content: { type: "string", description: "First 280 characters." },
+                  url: { type: ["string", "null"] },
+                  publishedAt: { type: ["string", "null"], format: "date-time" },
+                  metrics: ref("PostMetrics"),
+                  engagements: { type: "number" },
+                  engagementRate: { type: ["number", "null"] },
+                },
+              },
+            },
+            accounts: {
+              type: "array",
+              description: "Follower growth of each matching account.",
+              items: {
+                type: "object",
+                required: ["accountId", "platform", "name", "followers", "followersChange", "series", "metricsError"],
+                properties: {
+                  accountId: { type: "string" },
+                  platform: ref("PlatformId"),
+                  name: { type: ["string", "null"] },
+                  followers: { type: ["integer", "null"] },
+                  followersChange: { type: ["integer", "null"], description: "Last minus first follower count in the range; null with fewer than 2 snapshots." },
+                  series: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      required: ["date", "followers"],
+                      properties: { date: { type: "string", format: "date" }, followers: { type: "integer" } },
+                    },
+                  },
+                  metricsError: { type: ["string", "null"], description: "Last error while reading account metrics." },
+                },
+              },
+            },
+          },
+        },
+        PostAnalytics: {
+          type: "object",
+          required: ["postId", "content", "publishedAt", "totals", "platforms"],
+          properties: {
+            postId: { type: "string" },
+            content: { type: "string" },
+            publishedAt: { type: ["string", "null"], format: "date-time" },
+            totals: ref("AnalyticsTotals"),
+            platforms: {
+              type: "array",
+              items: {
+                type: "object",
+                required: [
+                  "targetId", "platform", "accountId", "status", "url", "publishedAt", "metrics", "engagements", "engagementRate",
+                  "metricsUpdatedAt", "nextUpdateAt", "metricsError", "supported", "history",
+                ],
+                properties: {
+                  targetId: { type: "string" },
+                  platform: ref("PlatformId"),
+                  accountId: { type: ["string", "null"] },
+                  status: ref("TargetStatus"),
+                  url: { type: ["string", "null"] },
+                  publishedAt: { type: ["string", "null"], format: "date-time" },
+                  metrics: { oneOf: [ref("PostMetrics"), { type: "null" }] },
+                  engagements: { type: "number" },
+                  engagementRate: { type: ["number", "null"] },
+                  metricsUpdatedAt: { type: ["string", "null"], format: "date-time" },
+                  nextUpdateAt: { type: ["string", "null"], format: "date-time", description: "Null when collection has stopped (posts older than 90 days or unsupported networks)." },
+                  metricsError: { type: ["string", "null"] },
+                  supported: { type: "boolean", description: "False when the network does not report post metrics." },
+                  history: {
+                    type: "array",
+                    description: "Snapshots over time, oldest first (up to 200).",
+                    items: { allOf: [ref("PostMetrics"), { type: "object", required: ["capturedAt"], properties: { capturedAt: { type: "string", format: "date-time" } } }] },
+                  },
+                },
+              },
+            },
+          },
+        },
+        AccountAnalytics: {
+          type: "object",
+          required: ["accountId", "platform", "name", "followers", "followersChange", "supported", "metricsError", "series"],
+          properties: {
+            accountId: { type: "string" },
+            platform: ref("PlatformId"),
+            name: { type: ["string", "null"] },
+            followers: { type: ["integer", "null"] },
+            followersChange: { type: ["integer", "null"] },
+            supported: { type: "boolean", description: "False when the network does not report account metrics." },
+            metricsError: { type: ["string", "null"] },
+            series: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["date", "followers", "following", "posts"],
+                properties: {
+                  date: { type: "string", format: "date" },
+                  followers: { type: ["integer", "null"] },
+                  following: { type: ["integer", "null"] },
+                  posts: { type: ["integer", "null"] },
+                },
+              },
             },
           },
         },

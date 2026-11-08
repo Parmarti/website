@@ -53,6 +53,7 @@ export class Fanout implements INodeType {
           { name: "Account", value: "account" },
           { name: "Profile", value: "profile" },
           { name: "Connect Link", value: "connectLink" },
+          { name: "Analytics", value: "analytics" },
         ],
         default: "post",
       },
@@ -377,6 +378,91 @@ export class Fanout implements INodeType {
           },
         ],
       },
+
+      /* ---------------- Analytics ---------------- */
+      {
+        displayName: "Operation",
+        name: "operation",
+        type: "options",
+        noDataExpression: true,
+        displayOptions: { show: { resource: ["analytics"] } },
+        options: [
+          {
+            name: "Get Overview",
+            value: "getOverview",
+            action: "Get an analytics overview",
+            description: "Totals, per-network breakdown, daily series, top posts and follower growth",
+          },
+          { name: "Get Post Analytics", value: "getPost", action: "Get the analytics of a post", description: "Metrics of one post for every account it went to" },
+        ],
+        default: "getOverview",
+      },
+      {
+        displayName: "Date Range",
+        name: "range",
+        type: "options",
+        options: [
+          { name: "Last 7 Days", value: "7" },
+          { name: "Last 30 Days", value: "30" },
+          { name: "Last 90 Days", value: "90" },
+          { name: "Custom", value: "custom" },
+        ],
+        default: "30",
+        displayOptions: { show: { resource: ["analytics"], operation: ["getOverview"] } },
+        description: "Posts published in this range are counted",
+      },
+      {
+        displayName: "From",
+        name: "from",
+        type: "dateTime",
+        default: "",
+        required: true,
+        displayOptions: { show: { resource: ["analytics"], operation: ["getOverview"], range: ["custom"] } },
+      },
+      {
+        displayName: "To",
+        name: "to",
+        type: "dateTime",
+        default: "",
+        displayOptions: { show: { resource: ["analytics"], operation: ["getOverview"], range: ["custom"] } },
+        description: "Leave empty for now",
+      },
+      {
+        displayName: "Filters",
+        name: "analyticsFilters",
+        type: "collection",
+        placeholder: "Add Filter",
+        default: {},
+        displayOptions: { show: { resource: ["analytics"], operation: ["getOverview"] } },
+        options: [
+          { displayName: "Platform", name: "platform", type: "options", options: PLATFORMS, default: "linkedin" },
+          {
+            displayName: "Profile Name or ID",
+            name: "profileId",
+            type: "options",
+            typeOptions: { loadOptionsMethod: "getProfiles" },
+            default: "",
+            description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+          },
+          {
+            displayName: "Account Name or ID",
+            name: "accountId",
+            type: "options",
+            typeOptions: { loadOptionsMethod: "getAccounts" },
+            default: "",
+            description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+          },
+          { displayName: "Time Zone", name: "timezone", type: "string", default: "UTC", description: "IANA time zone for the daily buckets, e.g. Europe/Madrid" },
+        ],
+      },
+      {
+        displayName: "Post ID",
+        name: "analyticsPostId",
+        type: "string",
+        default: "",
+        required: true,
+        displayOptions: { show: { resource: ["analytics"], operation: ["getPost"] } },
+      },
     ],
   };
 
@@ -497,6 +583,24 @@ export class Fanout implements INodeType {
           if (additional.redirectUrl) qs.redirectUrl = additional.redirectUrl;
           const result = await fanoutApiRequest.call(this, "GET", `/connect/${encodeURIComponent(platform)}`, undefined, qs);
           push({ platform, ...result }, i);
+        } else if (resource === "analytics") {
+          if (operation === "getOverview") {
+            const range = this.getNodeParameter("range", i, "30") as string;
+            const filters = this.getNodeParameter("analyticsFilters", i, {}) as IDataObject;
+            const qs: IDataObject = {};
+            if (range === "custom") {
+              qs.from = this.getNodeParameter("from", i) as string;
+              const to = this.getNodeParameter("to", i, "") as string;
+              if (to) qs.to = to;
+            } else {
+              qs.days = Number(range);
+            }
+            for (const key of ["platform", "profileId", "accountId", "timezone"]) if (filters[key]) qs[key] = filters[key];
+            push(await fanoutApiRequest.call(this, "GET", "/analytics", undefined, qs), i);
+          } else if (operation === "getPost") {
+            const id = encodeURIComponent(this.getNodeParameter("analyticsPostId", i) as string);
+            push(await fanoutApiRequest.call(this, "GET", `/analytics/posts/${id}`), i);
+          }
         } else {
           throw new NodeOperationError(this.getNode(), `Unknown resource ${resource}`, { itemIndex: i });
         }

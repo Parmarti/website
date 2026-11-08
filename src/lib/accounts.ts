@@ -109,6 +109,7 @@ export async function saveAccounts(input: {
       status: "active",
       lastError: null,
       platformAppId: input.platformAppId,
+      metricsNextAt: new Date(),
       ...tokenFields,
     };
     const row = await db.socialAccount.upsert({

@@ -247,3 +247,81 @@ test("non-JSON error bodies still produce a useful error", async () => {
   const c = new Fanout({ apiKey: "k", baseUrl, maxRetries: 0 });
   await assert.rejects(c.posts.get("broken"), (err: unknown) => err instanceof FanoutError && err.status === 502 && err.message === "HTTP 502");
 });
+
+const totals = {
+  posts: 2, engagements: 30, engagementRate: 0.03, impressions: 1000, reach: null, views: null,
+  likes: 20, comments: 5, shares: 5, saves: null, clicks: null, quotes: null,
+};
+
+test("analytics.overview sends range and filters as query params", async () => {
+  const overview = {
+    range: { from: "2026-10-01T00:00:00.000Z", to: "2026-10-31T23:59:59.999Z", timezone: "Europe/Madrid" },
+    totals,
+    coverage: { posts: 2, withMetrics: 2 },
+    byPlatform: [{ platform: "twitter", ...totals }],
+    daily: [{ date: "2026-10-01", posts: 2, engagements: 30, impressions: 1000, views: 0 }],
+    topPosts: [],
+    accounts: [{ accountId: "acc_1", platform: "twitter", name: "Jane", followers: 120, followersChange: 4, series: [], error: null }],
+  };
+  reply("GET /api/v1/analytics", { status: 200, body: overview });
+  const res = await client().analytics.overview({
+    from: new Date("2026-10-01T00:00:00.000Z"),
+    to: "2026-10-31",
+    platform: "twitter",
+    profileId: "prof_1",
+    accountId: "acc_1",
+    timezone: "Europe/Madrid",
+  });
+  assert.equal(last().method, "GET");
+  assert.equal(last().path, "/api/v1/analytics");
+  assert.deepEqual(last().query, {
+    from: "2026-10-01T00:00:00.000Z",
+    to: "2026-10-31",
+    platform: "twitter",
+    profileId: "prof_1",
+    accountId: "acc_1",
+    timezone: "Europe/Madrid",
+  });
+  assert.equal(res.totals.engagementRate, 0.03);
+  assert.equal(res.accounts[0].followersChange, 4);
+});
+
+test("analytics.overview with days only", async () => {
+  reply("GET /api/v1/analytics", { status: 200, body: { totals } });
+  await client().analytics.overview({ days: 7 });
+  assert.deepEqual(last().query, { days: "7" });
+  await client().analytics.overview();
+  assert.deepEqual(last().query, {});
+});
+
+test("analytics.post, refreshPost and account hit the right paths", async () => {
+  reply("GET /api/v1/analytics/posts/post_1", { status: 200, body: { postId: "post_1", content: "hi", publishedAt: null, totals, platforms: [] } });
+  const p = await client().analytics.post("post_1");
+  assert.equal(p.postId, "post_1");
+  assert.equal(last().path, "/api/v1/analytics/posts/post_1");
+
+  reply("POST /api/v1/analytics/posts/post_1/refresh", { status: 200, body: { queued: 2 } });
+  assert.deepEqual(await client().analytics.refreshPost("post_1"), { queued: 2 });
+  assert.equal(last().method, "POST");
+
+  reply("GET /api/v1/analytics/accounts/acc_1", {
+    status: 200,
+    body: { accountId: "acc_1", platform: "bluesky", name: "J", followers: 10, followersChange: 2, supported: true, error: null, series: [] },
+  });
+  const a = await client().analytics.account("acc_1", { days: 90 });
+  assert.equal(a.followers, 10);
+  assert.equal(last().path, "/api/v1/analytics/accounts/acc_1");
+  assert.deepEqual(last().query, { days: "90" });
+});
+
+test("analytics GETs retry on 503 like other GETs", async () => {
+  const before = recorded.length;
+  reply(
+    "GET /api/v1/analytics/posts/flaky",
+    { status: 503, body: { error: { code: "internal_error", message: "busy" } }, headers: { "retry-after": "0" } },
+    { status: 200, body: { postId: "flaky", content: "", publishedAt: null, totals, platforms: [] } },
+  );
+  const res = await client().analytics.post("flaky");
+  assert.equal(res.postId, "flaky");
+  assert.equal(recorded.length - before, 2);
+});

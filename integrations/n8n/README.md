@@ -34,6 +34,7 @@ Restart n8n after you install.
 | Account | Get Many, Get, Disconnect |
 | Profile | Create, Get Many |
 | Connect Link | Get (a link your user opens to connect an account) |
+| Analytics | Get Overview, Get Post Analytics |
 
 **Create a post**
 
@@ -45,6 +46,13 @@ Restart n8n after you install.
 The node returns the post. Publishing runs in the background, so the status is `scheduled` at first. Use the trigger node or **Post > Get** to read the final result.
 
 When the API rejects a post (for example Instagram without media), the error shows the problem for each network. Turn on **Continue On Fail** to keep the workflow running and get the error as an item.
+
+**Analytics**
+
+- **Get Overview:** pick a date range (last 7, 30 or 90 days, or a custom From/To) and optional filters (platform, profile, account, time zone). Returns totals, a per-network breakdown, a daily series, the top posts and follower growth in one item. Example: a weekly Schedule Trigger, then **Analytics > Get Overview** (last 7 days), then a Slack or email node with `{{ $json.totals.engagements }}` engagements and `{{ ($json.totals.engagementRate * 100).toFixed(2) }}%` engagement rate.
+- **Get Post Analytics:** the metrics of one post for every account it went to, with history.
+
+`engagements` = likes + comments + shares + saves + quotes. `engagementRate` = engagements / (impressions, else views, else reach).
 
 ## Fanout Trigger node
 

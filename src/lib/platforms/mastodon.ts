@@ -1,5 +1,5 @@
-import type { CredentialAdapter } from "./types";
-import { PlatformError, downloadMedia, fetchJson, sleep, str } from "./http";
+import type { CredentialAdapter, PostMetrics } from "./types";
+import { PlatformError, downloadMedia, fetchJson, num, sleep, str } from "./http";
 import { assertPublicUrl } from "../net";
 
 function normalizeInstance(raw: string): string {
@@ -89,5 +89,35 @@ export const mastodonAdapter: CredentialAdapter = {
       label: "Mastodon post",
     });
     return { platformPostId: status.id, url: status.url };
+  },
+  analytics: {
+    postBatchSize: 1,
+    note: "Reads favourites, boosts and replies with the account's token.",
+    async fetchPostMetrics(ctx, ids) {
+      const instance = ctx.credentials?.instanceUrl;
+      const token = ctx.credentials?.accessToken;
+      if (!instance || !token) throw new PlatformError("Missing Mastodon credentials. Reconnect the account.", { auth: true });
+      const out: Record<string, PostMetrics> = {};
+      for (const id of ids) {
+        try {
+          const s = await fetchJson<any>(`${instance}/api/v1/statuses/${encodeURIComponent(id)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+            label: "Mastodon post metrics",
+          });
+          out[id] = { likes: num(s.favourites_count), shares: num(s.reblogs_count), comments: num(s.replies_count), quotes: num(s.quotes_count) };
+        } catch (err) {
+          if (err instanceof PlatformError && err.opts.status === 404) continue;
+          throw err;
+        }
+      }
+      return out;
+    },
+    async fetchAccountMetrics(ctx) {
+      const instance = ctx.credentials?.instanceUrl;
+      const token = ctx.credentials?.accessToken;
+      if (!instance || !token) throw new PlatformError("Missing Mastodon credentials. Reconnect the account.", { auth: true });
+      const me = await fetchJson<any>(`${instance}/api/v1/accounts/verify_credentials`, { headers: { Authorization: `Bearer ${token}` }, label: "Mastodon account metrics" });
+      return { followers: num(me.followers_count), following: num(me.following_count), posts: num(me.statuses_count) };
+    },
   },
 };

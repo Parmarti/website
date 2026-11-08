@@ -20,6 +20,8 @@ A unified social media API. Connect your users' accounts once, then publish and 
 | `src/app/(site)/*` | Landing page, pricing, docs, legal pages |
 | `src/lib/plans.ts` | Plans, prices and limits |
 | `src/lib/brand.ts` | Product name and contact email |
+| `src/lib/analytics.ts` | Metrics collection schedule, overview and per-post analytics |
+| `src/app/dashboard/analytics`, `src/components/charts` | Analytics dashboard and charts |
 | `src/lib/mcp.ts`, `src/app/api/mcp` | Remote MCP server for AI agents |
 | `src/lib/openapi.ts` | OpenAPI 3.1 spec served at `/openapi.json` |
 | `sdks/node`, `sdks/python` | Client SDKs (no dependencies) |

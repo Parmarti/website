@@ -2,6 +2,18 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { Badge, Button, Card, PageHeader, statusTone } from "@/components/ui";
 import { PlatformIcon } from "@/components/platform-icon";
+import { compact } from "@/components/charts/format";
+import { engagementsOf } from "@/lib/analytics";
+import type { PostMetrics } from "@/lib/platforms";
+
+function metricsLine(m: PostMetrics | null) {
+  if (!m) return null;
+  const parts: string[] = [];
+  const views = m.impressions ?? m.views ?? m.reach;
+  if (views !== null && views !== undefined) parts.push(`${compact(views)} ${m.impressions != null ? "impressions" : m.views != null ? "views" : "reach"}`);
+  parts.push(`${compact(engagementsOf(m))} engagements`);
+  return parts.join(" · ");
+}
 import { cancelPostAction, retryPostAction } from "../actions";
 import { Composer, type ComposerAccount } from "../forms";
 
@@ -63,6 +75,7 @@ export default async function PostsPage() {
                       <PlatformIcon platform={t.platform} size={18} />
                       <Badge tone={statusTone(t.status)}>{t.status}</Badge>
                       {t.platformPostUrl ? <a className="text-brand" href={t.platformPostUrl} target="_blank" rel="noreferrer">View</a> : null}
+                      {t.metrics ? <span className="text-ink-2">{metricsLine(t.metrics as PostMetrics)}</span> : null}
                       {t.error ? <span className="truncate text-bad" title={t.error}>{t.error.slice(0, 120)}</span> : null}
                     </li>
                   ))}

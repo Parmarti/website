@@ -77,6 +77,9 @@ export interface PostTarget {
   error: string | null;
   attempts: number;
   publishedAt: string | null;
+  /** Latest metrics from the network; null until the first collection. */
+  metrics: PostMetrics | null;
+  metricsUpdatedAt: string | null;
   content?: string;
   platformSpecificData?: Record<string, unknown>;
 }
@@ -119,6 +122,8 @@ export interface Account {
   status: AccountStatus;
   lastError: string | null;
   tokenExpiresAt: string | null;
+  /** Latest follower count, when the network reports it. */
+  followers: number | null;
   usesOwnApp: boolean;
   metadata: Record<string, unknown>;
   createdAt: string;
@@ -170,6 +175,124 @@ export interface Usage {
 export interface ConnectUrl {
   authUrl: string;
   expiresInSeconds: number;
+}
+
+/** Unified post metrics. A field is missing (or null) when the network does not report it. */
+export interface PostMetrics {
+  impressions?: number | null;
+  reach?: number | null;
+  views?: number | null;
+  likes?: number | null;
+  comments?: number | null;
+  shares?: number | null;
+  saves?: number | null;
+  clicks?: number | null;
+  quotes?: number | null;
+}
+
+/**
+ * Sums over published targets; a metric is null when no target reported it.
+ * engagements = likes + comments + shares + saves + quotes.
+ * engagementRate = engagements / (impressions, else views, else reach), as a fraction.
+ */
+export interface AnalyticsTotals {
+  /** Published targets (one per account a post went to). */
+  posts: number;
+  engagements: number;
+  engagementRate: number | null;
+  /** Per target impressions, else views, else reach, summed. The denominator of engagementRate. */
+  audience: number | null;
+  impressions: number | null;
+  reach: number | null;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  saves: number | null;
+  clicks: number | null;
+  quotes: number | null;
+}
+
+export interface AnalyticsRangeParams {
+  /** ISO date (whole day) or date-time. */
+  from?: string | Date;
+  to?: string | Date;
+  /** Range length when `from` is omitted. Default 30. */
+  days?: number;
+}
+
+export interface AnalyticsOverviewParams extends AnalyticsRangeParams {
+  profileId?: string;
+  platform?: PlatformId;
+  accountId?: string;
+  /** IANA time zone for the daily buckets. Default UTC. */
+  timezone?: string;
+}
+
+export interface AnalyticsOverview {
+  range: { from: string; to: string; timezone: string };
+  totals: AnalyticsTotals;
+  coverage: { posts: number; withMetrics: number };
+  byPlatform: (AnalyticsTotals & { platform: PlatformId })[];
+  /** One entry per day by publish date. Missing metrics count as 0 here. */
+  daily: { date: string; posts: number; engagements: number; impressions: number; views: number }[];
+  topPosts: {
+    postId: string;
+    targetId: string;
+    platform: PlatformId;
+    accountId: string | null;
+    content: string;
+    url: string | null;
+    publishedAt: string | null;
+    metrics: PostMetrics;
+    engagements: number;
+    engagementRate: number | null;
+  }[];
+  accounts: {
+    accountId: string;
+    platform: PlatformId;
+    name: string | null;
+    followers: number | null;
+    followersChange: number | null;
+    series: { date: string; followers: number }[];
+    metricsError: string | null;
+  }[];
+}
+
+export interface PostAnalytics {
+  postId: string;
+  content: string;
+  publishedAt: string | null;
+  totals: AnalyticsTotals;
+  platforms: {
+    targetId: string;
+    platform: PlatformId;
+    accountId: string | null;
+    status: TargetStatus;
+    url: string | null;
+    publishedAt: string | null;
+    metrics: PostMetrics | null;
+    engagements: number;
+    engagementRate: number | null;
+    metricsUpdatedAt: string | null;
+    /** Null when collection has stopped. */
+    nextUpdateAt: string | null;
+    metricsError: string | null;
+    /** False when the network does not report post metrics. */
+    supported: boolean;
+    history: (PostMetrics & { capturedAt: string })[];
+  }[];
+}
+
+export interface AccountAnalytics {
+  accountId: string;
+  platform: PlatformId;
+  name: string | null;
+  followers: number | null;
+  followersChange: number | null;
+  supported: boolean;
+  metricsError: string | null;
+  series: { date: string; followers: number | null; following: number | null; posts: number | null }[];
 }
 
 export type WebhookEvent =
@@ -289,6 +412,17 @@ export interface WebhooksResource {
   test(id: string): Promise<{ delivered: boolean; status: number | null; error: string | null }>;
 }
 
+export interface AnalyticsResource {
+  /** Totals, per-network breakdown, daily series, top posts and follower growth. */
+  overview(params?: AnalyticsOverviewParams): Promise<AnalyticsOverview>;
+  /** Latest metrics and history of one post, per account. */
+  post(id: string): Promise<PostAnalytics>;
+  /** Ask for fresh metrics now. Targets updated in the last 5 minutes are skipped, so `queued` can be 0. */
+  refreshPost(id: string): Promise<{ queued: number }>;
+  /** Daily follower history of one account. */
+  account(id: string, params?: AnalyticsRangeParams): Promise<AccountAnalytics>;
+}
+
 export class Fanout {
   readonly baseUrl: string;
   readonly posts: PostsResource;
@@ -298,6 +432,7 @@ export class Fanout {
   readonly platforms: { list(): Promise<Platform[]> };
   readonly webhooks: WebhooksResource;
   readonly usage: { get(): Promise<Usage> };
+  readonly analytics: AnalyticsResource;
 
   private readonly apiKey: string;
   private readonly maxRetries: number;
@@ -373,6 +508,21 @@ export class Fanout {
     };
 
     this.usage = { get: () => req<Usage>("GET", "/usage") };
+
+    const range = (params: AnalyticsRangeParams & Record<string, unknown>): Query => {
+      const q: Query = {};
+      for (const [key, value] of Object.entries(params)) {
+        if (value instanceof Date) q[key] = value.toISOString();
+        else if (typeof value === "string" || typeof value === "number") q[key] = value;
+      }
+      return q;
+    };
+    this.analytics = {
+      overview: (params = {}) => req<AnalyticsOverview>("GET", "/analytics", { query: range({ ...params }) }),
+      post: (id) => req<PostAnalytics>("GET", `/analytics/posts/${enc(id)}`),
+      refreshPost: (id) => req<{ queued: number }>("POST", `/analytics/posts/${enc(id)}/refresh`),
+      account: (id, params = {}) => req<AccountAnalytics>("GET", `/analytics/accounts/${enc(id)}`, { query: range({ ...params }) }),
+    };
   }
 
   private async request<T>(method: string, path: string, opts: RequestOptions = {}): Promise<T> {

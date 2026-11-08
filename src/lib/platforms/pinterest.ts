@@ -1,5 +1,5 @@
-import type { OAuthAdapter, TokenSet } from "./types";
-import { PlatformError, basicAuth, expiresIn, fetchJson, form, str } from "./http";
+import type { AccountMetrics, OAuthAdapter, PostMetrics, TokenSet } from "./types";
+import { PlatformError, basicAuth, expiresIn, fetchJson, form, num, str } from "./http";
 
 const API = "https://api.pinterest.com/v5";
 const SCOPES = "boards:read,boards:write,pins:read,pins:write,user_accounts:read";
@@ -8,6 +8,12 @@ interface PinterestToken {
   access_token: string;
   refresh_token?: string;
   expires_in?: number;
+}
+
+/** Pinterest pin analytics accept at most a 90 day window ending today. */
+function analyticsWindow(now = new Date()) {
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  return { start_date: day(new Date(now.getTime() - 89 * 86400_000)), end_date: day(now) };
 }
 
 interface Board {
@@ -140,5 +146,46 @@ export const pinterestAdapter: OAuthAdapter = {
     });
     if (!pin?.id) throw new PlatformError("Pinterest did not return a pin id.", { retryable: true });
     return { platformPostId: String(pin.id), url: `https://www.pinterest.com/pin/${pin.id}/` };
+  },
+
+  analytics: {
+    postBatchSize: 1,
+    note: "Pin analytics need a Pinterest business account and cover the last 90 days.",
+
+    async fetchPostMetrics({ accessToken }, ids) {
+      if (!accessToken) throw new PlatformError("Pinterest account has no access token.", { auth: true });
+      const out: Record<string, PostMetrics> = {};
+      for (const id of ids) {
+        const params = new URLSearchParams({ ...analyticsWindow(), metric_types: "IMPRESSION,SAVE,PIN_CLICK,OUTBOUND_CLICK" });
+        let res: any;
+        try {
+          res = await fetchJson<any>(`${API}/pins/${encodeURIComponent(id)}/analytics?${params}`, {
+            label: "Pinterest pin metrics",
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+        } catch (err) {
+          if (err instanceof PlatformError && err.opts.status === 404) continue;
+          throw err;
+        }
+        const m = res?.all?.summary_metrics ?? res?.all?.lifetime_metrics ?? {};
+        const pinClicks = num(m.PIN_CLICK);
+        const outbound = num(m.OUTBOUND_CLICK);
+        out[id] = {
+          impressions: num(m.IMPRESSION),
+          saves: num(m.SAVE),
+          clicks: pinClicks === null && outbound === null ? null : (pinClicks ?? 0) + (outbound ?? 0),
+        };
+      }
+      return out;
+    },
+
+    async fetchAccountMetrics({ accessToken }): Promise<AccountMetrics> {
+      if (!accessToken) throw new PlatformError("Pinterest account has no access token.", { auth: true });
+      const user = await fetchJson<any>(`${API}/user_account`, {
+        label: "Pinterest account metrics",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      return { followers: num(user.follower_count), following: num(user.following_count), posts: num(user.pin_count) };
+    },
   },
 };

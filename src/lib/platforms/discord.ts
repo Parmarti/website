@@ -80,4 +80,7 @@ export const discordAdapter: CredentialAdapter = {
     const guildId = (ctx.account.metadata.guildId as string) || "@me";
     return { platformPostId: String(msg.id), url: `https://discord.com/channels/${guildId}/${msg.channel_id}/${msg.id}` };
   },
+  analytics: {
+    note: "Discord webhooks cannot read views or reactions.",
+  },
 };

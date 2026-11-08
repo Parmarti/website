@@ -1,5 +1,5 @@
-import type { OAuthAdapter, TokenSet } from "./types";
-import { PlatformError, downloadMedia, expiresIn, fetchJson, form, str, bool } from "./http";
+import type { OAuthAdapter, PostMetrics, TokenSet } from "./types";
+import { PlatformError, downloadMedia, expiresIn, fetchJson, form, str, bool, num } from "./http";
 
 const SCOPES = [
   "https://www.googleapis.com/auth/youtube.upload",
@@ -192,5 +192,29 @@ export const youtubeAdapter: OAuthAdapter = {
     });
     if (!uploaded?.id) throw new PlatformError("YouTube upload did not return a video id.", { retryable: true });
     return { platformPostId: uploaded.id, url: `https://www.youtube.com/watch?v=${uploaded.id}` };
+  },
+  analytics: {
+    postBatchSize: 50,
+    note: "Reads public video statistics with the youtube.readonly scope.",
+    async fetchPostMetrics(ctx, ids) {
+      const res = await fetchJson<{ items?: any[] }>(
+        `https://www.googleapis.com/youtube/v3/videos?${new URLSearchParams({ part: "statistics", id: ids.join(",") })}`,
+        { headers: { Authorization: `Bearer ${ctx.accessToken}` }, label: "YouTube video statistics" },
+      );
+      const out: Record<string, PostMetrics> = {};
+      for (const v of res.items ?? []) {
+        const s = v.statistics ?? {};
+        out[String(v.id)] = { views: num(s.viewCount), likes: num(s.likeCount), comments: num(s.commentCount) };
+      }
+      return out;
+    },
+    async fetchAccountMetrics(ctx) {
+      const res = await fetchJson<{ items?: any[] }>("https://www.googleapis.com/youtube/v3/channels?part=statistics&mine=true", {
+        headers: { Authorization: `Bearer ${ctx.accessToken}` },
+        label: "YouTube channel statistics",
+      });
+      const s = res.items?.[0]?.statistics ?? {};
+      return { followers: s.hiddenSubscriberCount ? null : num(s.subscriberCount), posts: num(s.videoCount) };
+    },
   },
 };

@@ -13,6 +13,7 @@ const toc = [
   ["posts", "Creating posts"],
   ["platform-options", "Platform options"],
   ["manage-posts", "Managing posts"],
+  ["analytics", "Analytics"],
   ["accounts", "Accounts and profiles"],
   ["webhooks", "Webhooks"],
   ["sdks", "SDKs and OpenAPI"],
@@ -182,6 +183,50 @@ export default function Docs() {
           </tbody>
         </table>
 
+        <h2 id="analytics">Analytics</h2>
+        <p>
+          We collect metrics for every published post automatically: about 20 minutes after it goes live, then every 30 minutes for the first 6 hours, every 2 hours
+          for 2 days, twice a day for a week, daily for a month, and weekly up to 90 days. Follower counts are read twice a day. Every post target in the API
+          includes its latest <code>metrics</code> and <code>metricsUpdatedAt</code>.
+        </p>
+        <table>
+          <tbody>
+            <tr><td><code>GET /analytics?days=30&amp;platform=&amp;profileId=&amp;accountId=&amp;timezone=</code></td><td>Totals, per-network breakdown, daily series, top 10 posts and follower changes for posts published in the range. Use <code>from</code>/<code>to</code> (YYYY-MM-DD) instead of <code>days</code> for a custom range.</td></tr>
+            <tr><td><code>GET /analytics/posts/:id</code></td><td>Metrics per network for one post, with history.</td></tr>
+            <tr><td><code>POST /analytics/posts/:id/refresh</code></td><td>Fetch fresh numbers now (each network at most once per 5 minutes).</td></tr>
+            <tr><td><code>GET /analytics/accounts/:id?days=90</code></td><td>Daily follower history of one account.</td></tr>
+          </tbody>
+        </table>
+        <p>
+          Metric fields: <code>impressions</code>, <code>reach</code>, <code>views</code>, <code>likes</code>, <code>comments</code>, <code>shares</code>, <code>saves</code>, <code>clicks</code>,{" "}
+          <code>quotes</code>. A field is missing when the network does not report it. <code>engagements</code> = likes + comments + shares + saves + quotes, and{" "}
+          <code>engagementRate</code> = engagements ÷ <code>audience</code>, where audience is each post&apos;s impressions (or views, or reach) summed.
+        </p>
+        <CodeBlock>{`GET ${base}/analytics/posts/POST_ID
+
+{
+  "postId": "cm4...",
+  "totals": { "posts": 2, "views": 5400, "likes": 310, "comments": 22, "engagements": 351, "engagementRate": 0.065 },
+  "platforms": [
+    { "platform": "youtube", "metrics": { "views": 5000, "likes": 300, "comments": 12 },
+      "engagements": 312, "engagementRate": 0.0624, "metricsUpdatedAt": "2026-12-01T10:30:00.000Z", "history": [ ... ] }
+  ]
+}`}</CodeBlock>
+        <table>
+          <thead><tr><th>Network</th><th>What is collected</th></tr></thead>
+          <tbody>
+            {platformList.map((p) => (
+              <tr key={p.id}>
+                <td>{p.name}</td>
+                <td>
+                  {p.analytics?.fetchPostMetrics ? "Post metrics" : "No post metrics"}
+                  {p.analytics?.fetchAccountMetrics ? " and followers" : ""}. {p.analytics?.note}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
         <h2 id="accounts">Accounts and profiles</h2>
         <p>A profile groups the accounts of one of your customers or brands.</p>
         <table>
@@ -257,8 +302,8 @@ claude mcp add --transport http ${brand.name.toLowerCase()} ${appUrl()}/api/mcp 
 }`}</CodeBlock>
         <p>
           Tools: <code>list_accounts</code>, <code>create_post</code>, <code>get_post</code>, <code>list_posts</code>, <code>cancel_post</code>, <code>retry_post</code>,{" "}
-          <code>get_connect_link</code>, <code>list_platforms</code>, <code>list_profiles</code>, <code>get_usage</code>. Then ask your agent: &quot;Post this changelog to LinkedIn and Bluesky
-          tomorrow at 9am.&quot;
+          <code>get_connect_link</code>, <code>get_analytics</code>, <code>get_post_analytics</code>, <code>list_platforms</code>, <code>list_profiles</code>, <code>get_usage</code>. Then ask your
+          agent: &quot;Post this changelog to LinkedIn and Bluesky tomorrow at 9am&quot; or &quot;Which of last month&apos;s posts did best, and why?&quot;
         </p>
 
         <h2 id="n8n">n8n and no-code</h2>

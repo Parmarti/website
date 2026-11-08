@@ -74,6 +74,23 @@ for failed in fanout.posts.iterate(status="failed"):
     fanout.posts.retry(failed["id"])
 ```
 
+## Analytics
+
+Metrics are collected from each network on a schedule (often for new posts, then less often, for 90 days).
+`engagements` = likes + comments + shares + saves + quotes; `engagementRate` = engagements / (impressions, else views, else reach).
+
+```python
+overview = client.analytics.overview(days=30, platform="instagram", timezone="Europe/Madrid")
+print(overview["totals"]["engagements"], overview["totals"]["engagementRate"])
+for top in overview["topPosts"]:
+    print(top["platform"], top["engagements"], top["url"])
+
+stats = client.analytics.post(post["id"])        # per-network metrics and history
+client.analytics.refresh_post(post["id"])        # ask for fresh numbers now
+followers = client.analytics.account("acc_123", days=90)
+# Use from_= and to= (ISO strings or datetime) for a custom range.
+```
+
 ## Connect your users' accounts
 
 ```python
@@ -141,6 +158,7 @@ def fanout_webhook():
 | `platforms` | `list()` |
 | `webhooks` | `list()`, `create(url, events)`, `delete(id)`, `test(id)` |
 | `usage` | `get()` |
+| `analytics` | `overview(from_, to, days, profile_id, platform, account_id, timezone)`, `post(id)`, `refresh_post(id)`, `account(id, from_, to, days)` |
 
 ## Development
 

@@ -211,4 +211,7 @@ export const linkedinAdapter: OAuthAdapter = {
     const urn = res.headers.get("x-restli-id") || res.headers.get("x-linkedin-id") || "";
     return { platformPostId: urn, url: urn ? `https://www.linkedin.com/feed/update/${urn}/` : null };
   },
+  analytics: {
+    note: "LinkedIn shares post statistics only with apps approved for its Community Management API, so LinkedIn posts have no metrics yet.",
+  },
 };

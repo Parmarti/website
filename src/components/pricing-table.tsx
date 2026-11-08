@@ -16,7 +16,7 @@ export function PricingTable() {
             <li>✓ {p.accounts} connected accounts</li>
             <li>✓ {p.postsPerMonth ? `${p.postsPerMonth} posts per month` : "Unlimited posts"}</li>
             <li>✓ All 14 networks</li>
-            <li>✓ Scheduling, webhooks, profiles</li>
+            <li>✓ Scheduling, analytics, webhooks</li>
             <li>✓ Bring your own developer apps</li>
           </ul>
           <LinkButton href="/signup" className="mt-6 w-full" variant={p.highlight ? "primary" : "secondary"}>

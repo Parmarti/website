@@ -1,10 +1,10 @@
-import type { OAuthAdapter } from "./types";
-import { expiresIn, form, PlatformError, str } from "./http";
-import { metaJson, requireToken, waitForMetaContainer } from "./facebook";
+import type { AccountMetrics, OAuthAdapter, PostMetrics } from "./types";
+import { expiresIn, form, num, PlatformError, str } from "./http";
+import { bestEffort, insightValue, isMetaNotFound, metaJson, requireToken, waitForMetaContainer } from "./facebook";
 
 const VER = process.env.META_GRAPH_VERSION || "v23.0";
 const GRAPH = `https://graph.instagram.com/${VER}`;
-const SCOPES = ["instagram_business_basic", "instagram_business_content_publish"];
+const SCOPES = ["instagram_business_basic", "instagram_business_content_publish", "instagram_business_manage_insights"];
 const CONTENT_TYPES = ["post", "reel", "story"];
 
 export const instagramAdapter: OAuthAdapter = {
@@ -199,5 +199,56 @@ export const instagramAdapter: OAuthAdapter = {
     }
 
     return { platformPostId: published.id, url };
+  },
+
+  analytics: {
+    postBatchSize: 1,
+    note: "Likes and comments work with the basic permission. Views, reach, saves and shares need instagram_business_manage_insights; accounts connected before analytics launched must reconnect.",
+
+    async fetchPostMetrics(ctx, ids) {
+      const token = requireToken(ctx, "Instagram");
+      const out: Record<string, PostMetrics> = {};
+      for (const id of ids) {
+        let basic: { like_count?: number; comments_count?: number };
+        try {
+          basic = await metaJson(`${GRAPH}/${id}?${new URLSearchParams({ fields: "like_count,comments_count", access_token: token })}`, {
+            label: "Instagram media metrics",
+          });
+        } catch (err) {
+          if (isMetaNotFound(err)) continue;
+          throw err;
+        }
+        const metrics: PostMetrics = { likes: num(basic.like_count), comments: num(basic.comments_count) };
+        // "impressions" was retired by Meta; "views" replaces it. One unsupported metric makes the whole
+        // call fail (e.g. for some media types), so fall back to asking for each metric on its own.
+        const ask = (metric: string) =>
+          bestEffort("Instagram media insights", () =>
+            metaJson<{ data?: unknown }>(`${GRAPH}/${id}/insights?${new URLSearchParams({ metric, access_token: token })}`, {
+              label: "Instagram media insights",
+            }),
+          );
+        const wanted: [string, keyof PostMetrics][] = [["views", "views"], ["reach", "reach"], ["saved", "saves"], ["shares", "shares"]];
+        const all = await ask(wanted.map(([m]) => m).join(","));
+        if (all) {
+          for (const [metric, key] of wanted) metrics[key] = insightValue(all.data, metric);
+        } else {
+          for (const [metric, key] of wanted) {
+            const one = await ask(metric);
+            if (one) metrics[key] = insightValue(one.data, metric);
+          }
+        }
+        out[id] = metrics;
+      }
+      return out;
+    },
+
+    async fetchAccountMetrics(ctx): Promise<AccountMetrics> {
+      const token = requireToken(ctx, "Instagram");
+      const me = await metaJson<{ followers_count?: number; follows_count?: number; media_count?: number }>(
+        `${GRAPH}/me?${new URLSearchParams({ fields: "followers_count,follows_count,media_count", access_token: token })}`,
+        { label: "Instagram account metrics" },
+      );
+      return { followers: num(me.followers_count), following: num(me.follows_count), posts: num(me.media_count) };
+    },
   },
 };

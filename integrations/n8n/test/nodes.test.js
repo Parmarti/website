@@ -264,3 +264,30 @@ test("verifySignature positive and negative cases", () => {
   assert.equal(verifySignature(body, "garbage", SECRET), false, "bad header");
   assert.equal(verifySignature(body, sign(body, SECRET, now), "", 300, now), false, "no secret");
 });
+
+test("analytics overview sends the range and filters, post analytics hits the post path", async () => {
+  const preset = fakeContext({
+    params: { resource: "analytics", operation: "getOverview", range: "7", analyticsFilters: { platform: "bluesky", timezone: "Europe/Madrid" } },
+    responses: [{ totals: { posts: 2, engagements: 10 } }],
+  });
+  const [out] = await new Fanout().execute.call(preset);
+  assert.equal(preset.calls[0].method, "GET");
+  assert.equal(preset.calls[0].url, `${BASE}/api/v1/analytics`);
+  assert.deepEqual(preset.calls[0].qs, { days: 7, platform: "bluesky", timezone: "Europe/Madrid" });
+  assert.equal(out[0].json.totals.engagements, 10);
+
+  const custom = fakeContext({
+    params: { resource: "analytics", operation: "getOverview", range: "custom", from: "2026-10-01T00:00:00", to: "", analyticsFilters: { profileId: "prof_1" } },
+    responses: [{ totals: {} }],
+  });
+  await new Fanout().execute.call(custom);
+  assert.deepEqual(custom.calls[0].qs, { from: "2026-10-01T00:00:00", profileId: "prof_1" });
+
+  const post = fakeContext({
+    params: { resource: "analytics", operation: "getPost", analyticsPostId: "post/1" },
+    responses: [{ postId: "post/1", platforms: [] }],
+  });
+  const [postOut] = await new Fanout().execute.call(post);
+  assert.equal(post.calls[0].url, `${BASE}/api/v1/analytics/posts/post%2F1`);
+  assert.equal(postOut[0].json.postId, "post/1");
+});
