@@ -26,7 +26,11 @@ A unified social media API. Connect your users' accounts once, then publish and 
 | `src/lib/openapi.ts` | OpenAPI 3.1 spec served at `/openapi.json` |
 | `sdks/node`, `sdks/python` | Client SDKs (no dependencies) |
 | `integrations/n8n` | n8n community node (action + trigger) |
-| `tests/` | Contract tests for every network adapter (`npm test`) |
+| `src/lib/storage.ts`, `src/lib/media.ts` | Media uploads (disk storage, type and size checks) |
+| `src/lib/rate-limit.ts` | API and login rate limits |
+| `src/lib/password-reset.ts`, `src/lib/email.ts` | Password reset emails (Resend) |
+| `tests/` | Contract tests for every network adapter, analytics and infrastructure (`npm test`) |
+| `.github/workflows/ci.yml` | CI: typecheck, tests, build, SDKs, Docker image |
 
 ## Run locally
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { ApiError, authenticateApiKey } from "@/lib/api";
 import { handleRpc } from "@/lib/mcp";
 import { processDuePosts } from "@/lib/publisher";
+import { checkApiLimit, rateHeaders } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +16,14 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const message = err instanceof ApiError ? err.message : "Unauthorized";
     return NextResponse.json({ jsonrpc: "2.0", id: null, error: { code: -32001, message } }, { status: 401, headers: { "WWW-Authenticate": 'Bearer realm="mcp"' } });
+  }
+
+  const limit = checkApiLimit(user.id, "POST");
+  if (!limit.ok) {
+    return NextResponse.json(
+      { jsonrpc: "2.0", id: null, error: { code: -32002, message: `Too many requests. Try again in ${limit.retryAfter} seconds.` } },
+      { status: 429, headers: rateHeaders(limit) },
+    );
   }
 
   let payload: unknown;

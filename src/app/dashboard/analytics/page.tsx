@@ -88,7 +88,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
           data={overview.daily.map((d) => ({
             date: d.date,
             value: d.engagements,
-            detail: `${d.posts} post${d.posts === 1 ? "" : "s"} published${d.views || d.impressions ? ` · ${compact(d.impressions || d.views)} ${d.impressions ? "impressions" : "views"}` : ""}`,
+            detail: `${d.posts} post${d.posts === 1 ? "" : "s"} published${d.views || d.impressions ? ` · ${compact((d.impressions ?? 0) + (d.views ?? 0))} views and impressions` : ""}`,
           }))}
         />
         <details className="mt-3 text-sm">
@@ -104,7 +104,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
                     <td className="py-1">{shortDate(d.date)}</td>
                     <td className="py-1 text-right">{d.posts}</td>
                     <td className="py-1 text-right">{full(d.engagements)}</td>
-                    <td className="py-1 text-right">{full(d.impressions || d.views)}</td>
+                    <td className="py-1 text-right">{d.impressions === null && d.views === null ? "n/a" : full((d.impressions ?? 0) + (d.views ?? 0))}</td>
                   </tr>
                 ))}
               </tbody>

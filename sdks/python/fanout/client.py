@@ -1,12 +1,13 @@
 import json
 import os
+import pathlib
 import socket
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import IO, Any, Dict, Iterator, List, Optional, Union
 
 from .errors import FanoutError
 
@@ -14,6 +15,36 @@ VERSION = "0.1.0"
 DEFAULT_BASE_URL = "https://api.example.com"  # placeholder: replace with your API domain
 
 _UNSET: Any = object()
+
+# Longest Retry-After (seconds) the client waits on a 429 before it gives up and raises instead.
+MAX_RATE_LIMIT_WAIT = 60.0
+
+CONTENT_TYPES = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "mp4": "video/mp4",
+    "m4v": "video/mp4",
+    "mov": "video/quicktime",
+    "webm": "video/webm",
+}
+
+
+def content_type_from_filename(filename: Optional[str]) -> Optional[str]:
+    """Guess a media content type from a file name, e.g. "clip.MOV" -> "video/quicktime"."""
+    if not filename or "." not in filename:
+        return None
+    return CONTENT_TYPES.get(filename.rsplit(".", 1)[-1].lower())
+
+
+def _header_int(headers: Any, name: str) -> Optional[int]:
+    value = headers.get(name) if headers is not None else None
+    try:
+        return int(float(value)) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 JSON = Dict[str, Any]
 
@@ -60,6 +91,7 @@ class Fanout:
         self.webhooks = Webhooks(self)
         self.usage = UsageResource(self)
         self.analytics = Analytics(self)
+        self.media = MediaResource(self)
 
     def _request(
         self,
@@ -69,7 +101,14 @@ class Fanout:
         body: Any = _UNSET,
         extra_headers: Optional[Dict[str, str]] = None,
         retry: bool = False,
+        raw_body: Optional[bytes] = None,
     ) -> Any:
+        """Send one request.
+
+        Retries happen only for requests that are safe to repeat (GET, or retry=True for writes that carry an
+        Idempotency-Key): on network errors and 5xx, and on 429 when the server sends Retry-After (up to 60 s).
+        Raw uploads (raw_body) are never retried.
+        """
         url = self.base_url + path
         params = {k: str(v) for k, v in (query or {}).items() if v is not None and v != ""}
         if params:
@@ -80,12 +119,15 @@ class Fanout:
             "User-Agent": f"fanout-python/{VERSION}",
         }
         data = None
-        if body is not _UNSET:
+        if raw_body is not None:
+            data = raw_body
+        elif body is not _UNSET:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
         headers.update(extra_headers or {})
 
-        retries = self.max_retries if method == "GET" or retry else 0
+        safe = raw_body is None and (method == "GET" or retry)
+        retries = self.max_retries if safe else 0
         attempt = 0
         while True:
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
@@ -95,20 +137,36 @@ class Fanout:
             except urllib.error.HTTPError as err:
                 status = err.code
                 raw = err.read()
-                if (status == 429 or status >= 500) and attempt < retries:
-                    time.sleep(self._retry_delay(err.headers.get("Retry-After"), attempt))
-                    attempt += 1
-                    continue
+                if attempt < retries:
+                    if status >= 500:
+                        time.sleep(self._retry_delay(err.headers.get("Retry-After"), attempt))
+                        attempt += 1
+                        continue
+                    wait = self._rate_limit_wait(err.headers.get("Retry-After")) if status == 429 else None
+                    if wait is not None:
+                        time.sleep(wait)
+                        attempt += 1
+                        continue
                 payload = self._parse(raw)
                 error = payload.get("error") if isinstance(payload, dict) else None
+                rate_limit = None
+                if status == 429:
+                    rate_limit = {
+                        "limit": _header_int(err.headers, "X-RateLimit-Limit"),
+                        "remaining": _header_int(err.headers, "X-RateLimit-Remaining"),
+                        "reset": _header_int(err.headers, "X-RateLimit-Reset"),
+                        "retry_after": _header_int(err.headers, "Retry-After"),
+                    }
+                default_code = "rate_limited" if status == 429 else "http_error"
                 if isinstance(error, dict):
                     raise FanoutError(
                         error.get("message") or f"HTTP {status}",
                         status=status,
-                        code=error.get("code") or "http_error",
+                        code=error.get("code") or default_code,
                         details=error.get("details"),
+                        rate_limit=rate_limit,
                     ) from None
-                raise FanoutError(f"HTTP {status}", status=status, code="http_error") from None
+                raise FanoutError(f"HTTP {status}", status=status, code=default_code, rate_limit=rate_limit) from None
             except (urllib.error.URLError, socket.timeout, ConnectionError) as err:
                 if attempt < retries:
                     time.sleep(self._retry_delay(None, attempt))
@@ -126,6 +184,17 @@ class Fanout:
             return json.loads(text)
         except ValueError:
             return text
+
+    @staticmethod
+    def _rate_limit_wait(header: Optional[str]) -> Optional[float]:
+        """Seconds to wait on a 429, or None when the server gave no Retry-After or asked for too long."""
+        if not header:
+            return None
+        try:
+            seconds = float(header)
+        except ValueError:
+            return None
+        return seconds if 0 <= seconds <= MAX_RATE_LIMIT_WAIT else None
 
     @staticmethod
     def _retry_delay(header: Optional[str], attempt: int) -> float:
@@ -341,7 +410,11 @@ class Analytics(_Resource):
         return self._client._request("GET", f"/analytics/posts/{_quote(post_id)}")
 
     def refresh_post(self, post_id: str) -> JSON:
-        """Ask for fresh metrics now: {"queued": n}. Targets updated in the last 5 minutes are skipped."""
+        """Ask for fresh metrics now: {"queued": n}. Targets updated in the last 5 minutes are skipped.
+
+        When queued is 0 the result also has "reason": "not_published" (nothing published to measure),
+        "already_queued" (a fetch is already waiting) or "refreshed_recently" (updated in the last 5 minutes).
+        """
         return self._client._request("POST", f"/analytics/posts/{_quote(post_id)}/refresh")
 
     def account(
@@ -354,3 +427,67 @@ class Analytics(_Resource):
         """Daily follower history of one account."""
         query = {"from": _date_param(from_), "to": _date_param(to), "days": days}
         return self._client._request("GET", f"/analytics/accounts/{_quote(account_id)}", query=query)
+
+
+UploadSource = Union[str, "os.PathLike[str]", bytes, bytearray, memoryview, IO[bytes]]
+
+
+class MediaResource(_Resource):
+    """Upload images and videos, then use the returned "url" in a post's media_items.
+
+    Allowed by default: JPEG, PNG, GIF, WebP (up to 20 MB) and MP4, MOV, WebM (up to 512 MB).
+    """
+
+    def upload(
+        self,
+        source: UploadSource,
+        filename: Optional[str] = None,
+        content_type: Optional[str] = None,
+    ) -> JSON:
+        """Upload a file and return the stored media ({"id", "url", "type", ...}).
+
+        source: a file path, raw bytes, or an open binary file. The file is read into memory.
+        filename: defaults to the path's or file object's name. Also used to guess content_type.
+        Uploads are never retried automatically.
+        """
+        if isinstance(source, (str, os.PathLike)):
+            path = pathlib.Path(source)
+            data = path.read_bytes()
+            filename = filename or path.name
+        elif isinstance(source, (bytes, bytearray, memoryview)):
+            data = bytes(source)
+        elif hasattr(source, "read"):
+            data = source.read()
+            if not isinstance(data, (bytes, bytearray)):
+                raise TypeError("upload() needs a file opened in binary mode ('rb').")
+            data = bytes(data)
+            name = getattr(source, "name", None)
+            if not filename and isinstance(name, str):
+                filename = os.path.basename(name)
+        else:
+            raise TypeError("upload() takes a file path, bytes or a binary file object.")
+        content_type = content_type or content_type_from_filename(filename)
+        if not content_type:
+            raise FanoutError(
+                'Cannot tell the file type. Pass content_type (e.g. "image/png") or a filename with an extension.',
+                status=0,
+                code="unknown_content_type",
+            )
+        return self._client._request(
+            "POST",
+            "/media",
+            query={"filename": filename},
+            raw_body=data,
+            extra_headers={"Content-Type": content_type},
+        )["media"]
+
+    def list(self, limit: Optional[int] = None, cursor: Optional[str] = None) -> JSON:
+        """One page of uploaded files, newest first: {"media": [...], "nextCursor": ...}."""
+        return self._client._request("GET", "/media", query={"limit": limit, "cursor": cursor})
+
+    def get(self, media_id: str) -> JSON:
+        return self._client._request("GET", f"/media/{_quote(media_id)}")["media"]
+
+    def delete(self, media_id: str) -> JSON:
+        """Delete the stored file. Posts already published keep their copy on the networks."""
+        return self._client._request("DELETE", f"/media/{_quote(media_id)}")

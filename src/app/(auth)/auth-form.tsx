@@ -31,6 +31,9 @@ export function AuthForm({
       <div>
         <Label htmlFor="password">Password</Label>
         <Input id="password" name="password" type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} required minLength={8} />
+        {mode === "login" ? (
+          <Link href="/forgot-password" className="mt-1.5 inline-block text-xs font-medium text-brand">Forgot your password?</Link>
+        ) : null}
       </div>
       {next ? <input type="hidden" name="next" value={next} /> : null}
       <Button type="submit" className="w-full" disabled={pending}>

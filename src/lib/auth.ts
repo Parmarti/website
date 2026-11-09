@@ -51,3 +51,10 @@ export async function requireUser() {
   if (!user) redirect("/login");
   return user;
 }
+
+/** Sign the user out everywhere except this browser. */
+export async function revokeOtherSessions(userId: string) {
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  await db.session.deleteMany({ where: { userId, ...(token ? { tokenHash: { not: sha256(token) } } : {}) } });
+}

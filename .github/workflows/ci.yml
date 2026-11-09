@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main, "claude/**"]
+  pull_request:
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U app" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://app:app@localhost:5432/app
+      APP_URL: http://localhost:3000
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Apply migrations to a clean database
+        run: npx prisma migrate deploy
+      - name: Check that migrations match the schema
+        run: |
+          PGPASSWORD=app psql -h localhost -U app -d app -c 'CREATE DATABASE shadow'
+          npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url postgresql://app:app@localhost:5432/shadow --exit-code
+      - run: npx tsc --noEmit
+      - name: Adapter, analytics and unit tests
+        run: npm test
+      - run: npm run build
+
+  sdks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Node SDK
+        working-directory: sdks/node
+        run: npm ci && npm run build && npm test
+      - name: Python SDK
+        working-directory: sdks/python
+        run: python -m unittest -v
+      - name: n8n node
+        working-directory: integrations/n8n
+        run: npm ci && npm run build && npm test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the production image
+        run: docker build -t fanout:ci .

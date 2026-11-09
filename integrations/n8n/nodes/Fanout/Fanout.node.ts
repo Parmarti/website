@@ -9,8 +9,8 @@ import type {
   NodeConnectionType,
 } from "n8n-workflow";
 import { NodeOperationError } from "n8n-workflow";
-import { fanoutApiRequest, fanoutApiRequestAllPosts } from "./GenericFunctions";
-import { PLATFORMS } from "./shared";
+import { fanoutApiRequest, fanoutApiRequestAllPosts, fanoutApiUpload } from "./GenericFunctions";
+import { PLATFORMS, contentTypeFromFilename } from "./shared";
 
 const POST_STATUSES = ["draft", "scheduled", "publishing", "published", "partial", "failed", "cancelled"].map((s) => ({
   name: s.charAt(0).toUpperCase() + s.slice(1),
@@ -54,6 +54,7 @@ export class Fanout implements INodeType {
           { name: "Profile", value: "profile" },
           { name: "Connect Link", value: "connectLink" },
           { name: "Analytics", value: "analytics" },
+          { name: "Media", value: "media" },
         ],
         default: "post",
       },
@@ -463,6 +464,69 @@ export class Fanout implements INodeType {
         required: true,
         displayOptions: { show: { resource: ["analytics"], operation: ["getPost"] } },
       },
+
+      /* ---------------- Media ---------------- */
+      {
+        displayName: "Operation",
+        name: "operation",
+        type: "options",
+        noDataExpression: true,
+        displayOptions: { show: { resource: ["media"] } },
+        options: [
+          {
+            name: "Upload",
+            value: "upload",
+            action: "Upload a file",
+            description: "Upload an image or video from a binary property and get its public URL for posts",
+          },
+          { name: "Delete", value: "delete", action: "Delete a file", description: "Delete an uploaded file" },
+        ],
+        default: "upload",
+      },
+      {
+        displayName: "Input Binary Field",
+        name: "binaryPropertyName",
+        type: "string",
+        default: "data",
+        required: true,
+        displayOptions: { show: { resource: ["media"], operation: ["upload"] } },
+        description: "Name of the binary property that holds the file. JPEG, PNG, GIF, WebP (20 MB) and MP4, MOV, WebM (512 MB) by default.",
+      },
+      {
+        displayName: "Options",
+        name: "uploadOptions",
+        type: "collection",
+        placeholder: "Add Option",
+        default: {},
+        displayOptions: { show: { resource: ["media"], operation: ["upload"] } },
+        options: [
+          { displayName: "File Name", name: "fileName", type: "string", default: "", description: "Overrides the binary file name" },
+          {
+            displayName: "Content Type",
+            name: "contentType",
+            type: "options",
+            options: [
+              { name: "GIF Image", value: "image/gif" },
+              { name: "JPEG Image", value: "image/jpeg" },
+              { name: "MOV Video", value: "video/quicktime" },
+              { name: "MP4 Video", value: "video/mp4" },
+              { name: "PNG Image", value: "image/png" },
+              { name: "WebM Video", value: "video/webm" },
+              { name: "WebP Image", value: "image/webp" },
+            ],
+            default: "image/jpeg",
+            description: "Overrides the binary MIME type",
+          },
+        ],
+      },
+      {
+        displayName: "Media ID",
+        name: "mediaId",
+        type: "string",
+        default: "",
+        required: true,
+        displayOptions: { show: { resource: ["media"], operation: ["delete"] } },
+      },
     ],
   };
 
@@ -600,6 +664,23 @@ export class Fanout implements INodeType {
           } else if (operation === "getPost") {
             const id = encodeURIComponent(this.getNodeParameter("analyticsPostId", i) as string);
             push(await fanoutApiRequest.call(this, "GET", `/analytics/posts/${id}`), i);
+          }
+        } else if (resource === "media") {
+          if (operation === "upload") {
+            const property = this.getNodeParameter("binaryPropertyName", i, "data") as string;
+            const binary = this.helpers.assertBinaryData(i, property);
+            const options = this.getNodeParameter("uploadOptions", i, {}) as IDataObject;
+            const fileName = (options.fileName as string) || binary.fileName || undefined;
+            const contentType = (options.contentType as string) || binary.mimeType || contentTypeFromFilename(fileName);
+            if (!contentType) {
+              throw new NodeOperationError(this.getNode(), "Cannot tell the file type. Set Options > Content Type.", { itemIndex: i });
+            }
+            const buffer = await this.helpers.getBinaryDataBuffer(i, property);
+            const { media } = await fanoutApiUpload.call(this, buffer, contentType, fileName);
+            push(media, i);
+          } else if (operation === "delete") {
+            const id = encodeURIComponent(this.getNodeParameter("mediaId", i) as string);
+            push(await fanoutApiRequest.call(this, "DELETE", `/media/${id}`), i);
           }
         } else {
           throw new NodeOperationError(this.getNode(), `Unknown resource ${resource}`, { itemIndex: i });

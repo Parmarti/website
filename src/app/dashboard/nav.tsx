@@ -12,6 +12,7 @@ const items = [
   { href: "/dashboard/webhooks", label: "Webhooks" },
   { href: "/dashboard/apps", label: "Developer apps" },
   { href: "/dashboard/billing", label: "Billing" },
+  { href: "/dashboard/settings", label: "Settings" },
 ];
 
 export function DashboardNav() {

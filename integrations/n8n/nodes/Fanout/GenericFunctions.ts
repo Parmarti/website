@@ -67,6 +67,35 @@ export async function fanoutApiRequest(
   }
 }
 
+/** Upload raw file bytes to POST /media. Returns the parsed JSON response. */
+export async function fanoutApiUpload(
+  this: IExecuteFunctions,
+  data: Buffer,
+  contentType: string,
+  filename?: string,
+): Promise<any> {
+  const credentials = await this.getCredentials("fanoutApi");
+  const options: IHttpRequestOptions = {
+    method: "POST",
+    url: `${normalizeBaseUrl(credentials.baseUrl as string)}/api/v1/media`,
+    headers: { "Content-Type": contentType },
+    body: data,
+    // The body is bytes, not JSON. The response is JSON and is parsed below if needed.
+    json: false,
+    ...(filename ? { qs: { filename } } : {}),
+  };
+  try {
+    const response = await this.helpers.httpRequestWithAuthentication.call(this, "fanoutApi", options);
+    if (Buffer.isBuffer(response)) return JSON.parse(response.toString("utf8"));
+    return typeof response === "string" ? JSON.parse(response) : response;
+  } catch (error) {
+    const { message, description } = apiErrorDetails(error);
+    const apiError = new NodeApiError(this.getNode(), error as JsonObject, { message, description });
+    if (description) apiError.description = description;
+    throw apiError;
+  }
+}
+
 /** Follow nextCursor until the limit is reached or there are no more pages. */
 export async function fanoutApiRequestAllPosts(this: IExecuteFunctions, qs: IDataObject, limit?: number): Promise<IDataObject[]> {
   const results: IDataObject[] = [];

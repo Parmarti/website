@@ -70,6 +70,16 @@ export interface DownloadedMedia {
 
 /** Download user supplied media (public URLs only) with a size cap. */
 export async function downloadMedia(url: string, maxBytes = 512 * 1024 * 1024): Promise<DownloadedMedia> {
+  // Files uploaded to our own storage are read from disk instead of over the network.
+  const { ownMediaId, readMedia } = await import("../storage");
+  const ownId = ownMediaId(url);
+  if (ownId) {
+    const { db } = await import("../db");
+    const media = await db.media.findUnique({ where: { id: ownId } });
+    if (!media) throw new PlatformError(`Uploaded media not found: ${url}`);
+    if (media.size > maxBytes) throw new PlatformError(`Media is too large (${media.size} bytes, limit ${maxBytes})`);
+    return { buffer: await readMedia(ownId), contentType: media.contentType, size: media.size, filename: media.filename };
+  }
   const parsed = await assertPublicUrl(url);
   let res: Response;
   try {

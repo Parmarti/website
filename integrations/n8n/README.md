@@ -35,6 +35,7 @@ Restart n8n after you install.
 | Profile | Create, Get Many |
 | Connect Link | Get (a link your user opens to connect an account) |
 | Analytics | Get Overview, Get Post Analytics |
+| Media | Upload, Delete |
 
 **Create a post**
 
@@ -53,6 +54,13 @@ When the API rejects a post (for example Instagram without media), the error sho
 - **Get Post Analytics:** the metrics of one post for every account it went to, with history.
 
 `engagements` = likes + comments + shares + saves + quotes. `engagementRate` = engagements / (impressions, else views, else reach).
+
+**Media**
+
+- **Upload:** sends the file in a binary property (default `data`) and returns its public `url`. JPEG, PNG, GIF, WebP (up to 20 MB) and MP4, MOV, WebM (up to 512 MB) by default. The type comes from the binary MIME type or file name; set **Options > Content Type** to override it.
+- **Delete:** removes an uploaded file. Posts already published keep their copy.
+
+Example: **Read/Write Files from Disk** (or **HTTP Request** with "File" response) > **Fanout: Media > Upload** > **Fanout: Post > Create** with the media URL set to `{{ $json.url }}`.
 
 ## Fanout Trigger node
 

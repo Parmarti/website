@@ -63,6 +63,22 @@ fanout.posts.create(
 
 Supported platform ids are in `fanout.PLATFORMS`.
 
+## Upload media
+
+Upload a file once, then use its public `url` in `media_items`. JPEG, PNG, GIF, WebP (up to 20 MB) and MP4, MOV, WebM (up to 512 MB) by default.
+
+```python
+image = client.media.upload("launch.png")  # a path, raw bytes, or a file opened with "rb"
+
+client.posts.create(
+    content="We just launched!",
+    media_items=[{"url": image["url"], "altText": "Screenshot of the new dashboard"}],
+    platforms=[{"accountId": "acc_123"}],
+)
+```
+
+The type is guessed from the file name; pass `content_type="video/mp4"` for raw bytes without a name. Uploads are never retried automatically. `client.media.list()`, `client.media.get(id)` and `client.media.delete(id)` manage stored files.
+
 ## Track results
 
 ```python
@@ -86,7 +102,7 @@ for top in overview["topPosts"]:
     print(top["platform"], top["engagements"], top["url"])
 
 stats = client.analytics.post(post["id"])        # per-network metrics and history
-client.analytics.refresh_post(post["id"])        # ask for fresh numbers now
+client.analytics.refresh_post(post["id"])        # ask for fresh numbers now; when "queued" is 0, "reason" is "not_published", "already_queued" or "refreshed_recently"
 followers = client.analytics.account("acc_123", days=90)
 # Use from_= and to= (ISO strings or datetime) for a custom range.
 ```
@@ -113,11 +129,15 @@ try:
     fanout.posts.create(content="x" * 400, platforms=[{"accountId": "acc_x"}])
 except FanoutError as err:
     print(err.status)   # 422
-    print(err.code)     # "validation_error"
+    print(err.code)     # "platform_rejected"
     print(err.details)  # [{"accountId": ..., "platform": "twitter", "errors": [...]}]
 ```
 
-`status` is 0 for network errors (`code="network_error"`). GET requests are retried up to 2 times on network errors, 429 and 5xx; other methods are never retried. Change with `Fanout(..., max_retries=0, timeout=30)`.
+`status` is 0 for network errors (`code="network_error"`). Upload errors use `too_large` (413) and `unsupported_type` (415).
+
+The API allows 300 requests per minute per account, of which 60 can be writes (your operator may set other numbers). Over the limit you get status 429 with `code="rate_limited"`, and `err.rate_limit` holds `limit`, `remaining`, `reset` and `retry_after`.
+
+Retries: requests that are safe to repeat (GET, and `posts.create` with an `idempotency_key`) are retried up to 2 times on network errors and 5xx, and on 429 when the server sends `Retry-After` (up to 60 s). Other writes and uploads are never retried. Change with `Fanout(..., max_retries=0, timeout=30)`.
 
 ## Webhooks
 
@@ -159,6 +179,7 @@ def fanout_webhook():
 | `webhooks` | `list()`, `create(url, events)`, `delete(id)`, `test(id)` |
 | `usage` | `get()` |
 | `analytics` | `overview(from_, to, days, profile_id, platform, account_id, timezone)`, `post(id)`, `refresh_post(id)`, `account(id, from_, to, days)` |
+| `media` | `upload(path_or_bytes, filename, content_type)`, `list(limit, cursor)`, `get(id)`, `delete(id)` |
 
 ## Development
 

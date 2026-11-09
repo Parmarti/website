@@ -234,8 +234,8 @@ export interface AnalyticsOverview {
   totals: AnalyticsTotals;
   coverage: { posts: number; withMetrics: number };
   byPlatform: (AnalyticsTotals & { platform: PlatformId })[];
-  /** One entry per day by publish date. Missing metrics count as 0 here. */
-  daily: { date: string; posts: number; engagements: number; impressions: number; views: number }[];
+  /** One entry per day by publish date. impressions and views are null when no post that day reported them. */
+  daily: { date: string; posts: number; engagements: number; impressions: number | null; views: number | null }[];
   topPosts: {
     postId: string;
     targetId: string;
@@ -295,6 +295,52 @@ export interface AccountAnalytics {
   series: { date: string; followers: number | null; following: number | null; posts: number | null }[];
 }
 
+export interface RefreshResult {
+  queued: number;
+  /**
+   * Only when queued is 0. not_published: nothing published to measure. already_queued: a fetch is already waiting.
+   * refreshed_recently: every target was updated in the last 5 minutes.
+   */
+  reason?: "not_published" | "already_queued" | "refreshed_recently";
+}
+
+export type MediaContentType = "image/jpeg" | "image/png" | "image/gif" | "image/webp" | "video/mp4" | "video/quicktime" | "video/webm";
+
+/** An uploaded file. Use `url` in a post's mediaItems. */
+export interface Media {
+  id: string;
+  url: string;
+  type: "image" | "video";
+  filename: string;
+  contentType: MediaContentType;
+  size: number;
+  createdAt: string;
+}
+
+export interface MediaPage {
+  media: Media[];
+  nextCursor: string | null;
+}
+
+/** File data for media.upload: a Blob or File, raw bytes (Buffer, Uint8Array, ArrayBuffer) or a ReadableStream. */
+export type UploadData = Blob | Uint8Array | ArrayBuffer | ReadableStream<Uint8Array>;
+
+export interface UploadOptions {
+  /** File name, e.g. "launch.png". Also used to guess the content type. */
+  filename?: string;
+  /** e.g. "image/png". Guessed from a Blob's type or the filename extension when omitted. */
+  contentType?: string;
+}
+
+export interface RateLimitInfo {
+  limit: number | null;
+  remaining: number | null;
+  /** Unix time (seconds) when the window resets. */
+  reset: number | null;
+  /** Seconds the server asked to wait. */
+  retryAfter: number | null;
+}
+
 export type WebhookEvent =
   | { id: string; event: "post.published" | "post.partial" | "post.failed"; createdAt: string; data: Post }
   | { id: string; event: "account.connected" | "account.disconnected" | "account.expired"; createdAt: string; data: Account }
@@ -304,7 +350,10 @@ export interface FanoutOptions {
   apiKey: string;
   /** Your API host, e.g. "https://api.yourdomain.com". "/api/v1" is added if missing. */
   baseUrl?: string;
-  /** Retries for GET requests on network errors, 429 and 5xx. Default 2. */
+  /**
+   * Retries for requests that are safe to repeat (GET, and posts.create with an idempotencyKey):
+   * on network errors and 5xx, and on 429 when the server sends Retry-After. Uploads are never retried. Default 2.
+   */
   maxRetries?: number;
   /** Per request timeout. Default 60000 ms. */
   timeoutMs?: number;
@@ -323,13 +372,16 @@ export class FanoutError extends Error {
   readonly code: string;
   /** Extra data. For 422 responses: `[{ accountId, platform, errors: string[] }]`. */
   readonly details: unknown;
+  /** For 429 responses (`rate_limited`): the limit headers the server sent. */
+  readonly rateLimit?: RateLimitInfo;
 
-  constructor(message: string, init: { status: number; code: string; details?: unknown }) {
+  constructor(message: string, init: { status: number; code: string; details?: unknown; rateLimit?: RateLimitInfo }) {
     super(message);
     this.name = "FanoutError";
     this.status = init.status;
     this.code = init.code;
     this.details = init.details;
+    if (init.rateLimit) this.rateLimit = init.rateLimit;
   }
 }
 
@@ -341,10 +393,31 @@ type Query = Record<string, string | number | undefined | null>;
 
 interface RequestOptions {
   query?: Query;
+  /** JSON body. */
   body?: unknown;
+  /** Raw body sent as is (uploads). Never retried. */
+  rawBody?: Blob | Uint8Array | ArrayBuffer | ReadableStream<Uint8Array>;
   headers?: Record<string, string>;
   /** Allow retries for a non-GET request (safe when it carries an Idempotency-Key). */
   retry?: boolean;
+}
+
+const CONTENT_TYPES: Record<string, MediaContentType> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  webp: "image/webp",
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+};
+
+/** Guess a media content type from a file name, e.g. "clip.MOV" -> "video/quicktime". */
+export function contentTypeFromFilename(filename: string | undefined): MediaContentType | undefined {
+  const ext = filename?.split(".").pop()?.toLowerCase();
+  return ext ? CONTENT_TYPES[ext] : undefined;
 }
 
 export interface CreatePostOptions {
@@ -417,10 +490,23 @@ export interface AnalyticsResource {
   overview(params?: AnalyticsOverviewParams): Promise<AnalyticsOverview>;
   /** Latest metrics and history of one post, per account. */
   post(id: string): Promise<PostAnalytics>;
-  /** Ask for fresh metrics now. Targets updated in the last 5 minutes are skipped, so `queued` can be 0. */
-  refreshPost(id: string): Promise<{ queued: number }>;
+  /** Ask for fresh metrics now. Targets updated in the last 5 minutes are skipped, so `queued` can be 0 (see `reason`). */
+  refreshPost(id: string): Promise<RefreshResult>;
   /** Daily follower history of one account. */
   account(id: string, params?: AnalyticsRangeParams): Promise<AccountAnalytics>;
+}
+
+export interface MediaResource {
+  /**
+   * Upload an image or video and get its public `url` for mediaItems.
+   * JPEG, PNG, GIF, WebP (20 MB) and MP4, MOV, WebM (512 MB) by default. Not retried.
+   */
+  upload(data: UploadData, options?: UploadOptions): Promise<Media>;
+  /** One page of uploaded files, newest first. */
+  list(params?: { limit?: number; cursor?: string }): Promise<MediaPage>;
+  get(id: string): Promise<Media>;
+  /** Delete the stored file. Posts already published keep their copy on the networks. */
+  delete(id: string): Promise<{ deleted: true }>;
 }
 
 export class Fanout {
@@ -433,6 +519,7 @@ export class Fanout {
   readonly webhooks: WebhooksResource;
   readonly usage: { get(): Promise<Usage> };
   readonly analytics: AnalyticsResource;
+  readonly media: MediaResource;
 
   private readonly apiKey: string;
   private readonly maxRetries: number;
@@ -520,8 +607,32 @@ export class Fanout {
     this.analytics = {
       overview: (params = {}) => req<AnalyticsOverview>("GET", "/analytics", { query: range({ ...params }) }),
       post: (id) => req<PostAnalytics>("GET", `/analytics/posts/${enc(id)}`),
-      refreshPost: (id) => req<{ queued: number }>("POST", `/analytics/posts/${enc(id)}/refresh`),
+      refreshPost: (id) => req<RefreshResult>("POST", `/analytics/posts/${enc(id)}/refresh`),
       account: (id, params = {}) => req<AccountAnalytics>("GET", `/analytics/accounts/${enc(id)}`, { query: range({ ...params }) }),
+    };
+
+    this.media = {
+      upload: async (data, options = {}) => {
+        const FileCtor = (globalThis as { File?: typeof File }).File;
+        const filename = options.filename ?? (FileCtor && data instanceof FileCtor ? data.name : undefined);
+        const blobType = typeof Blob !== "undefined" && data instanceof Blob ? data.type : "";
+        const contentType = options.contentType ?? (blobType || undefined) ?? contentTypeFromFilename(filename);
+        if (!contentType) {
+          throw new FanoutError("Cannot tell the file type. Pass options.contentType (e.g. \"image/png\") or a filename with an extension.", {
+            status: 0,
+            code: "unknown_content_type",
+          });
+        }
+        const res = await req<{ media: Media }>("POST", "/media", {
+          query: { filename },
+          rawBody: data,
+          headers: { "Content-Type": contentType },
+        });
+        return res.media;
+      },
+      list: (params = {}) => req<MediaPage>("GET", "/media", { query: { ...params } }),
+      get: async (id) => (await req<{ media: Media }>("GET", `/media/${enc(id)}`)).media,
+      delete: (id) => req<{ deleted: true }>("DELETE", `/media/${enc(id)}`),
     };
   }
 
@@ -538,16 +649,23 @@ export class Fanout {
     if (opts.body !== undefined) headers["Content-Type"] = "application/json";
     Object.assign(headers, opts.headers);
 
-    const retries = method === "GET" || opts.retry ? this.maxRetries : 0;
+    const isStream = typeof ReadableStream !== "undefined" && opts.rawBody instanceof ReadableStream;
+    const body: BodyInit | undefined =
+      opts.rawBody !== undefined ? (opts.rawBody as BodyInit) : opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
+    // Only repeat requests that cannot cause a second side effect. A raw upload body can be read only once.
+    const safe = opts.rawBody === undefined && (method === "GET" || opts.retry === true);
+    const retries = safe ? this.maxRetries : 0;
     for (let attempt = 0; ; attempt++) {
       let res: Response;
       try {
         res = await this.fetchImpl(url, {
           method,
           headers,
-          body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+          body,
           signal: AbortSignal.timeout(this.timeoutMs),
-        });
+          // Node's fetch needs half duplex to send a stream body.
+          ...(isStream ? { duplex: "half" } : {}),
+        } as RequestInit);
       } catch (err) {
         if (attempt < retries) {
           await sleep(backoff(attempt));
@@ -556,9 +674,17 @@ export class Fanout {
         throw new FanoutError(`Request failed: ${(err as Error).message}`, { status: 0, code: "network_error" });
       }
 
-      if ((res.status === 429 || res.status >= 500) && attempt < retries) {
-        await sleep(retryAfterMs(res.headers.get("retry-after")) ?? backoff(attempt));
-        continue;
+      if (attempt < retries) {
+        if (res.status >= 500) {
+          await sleep(retryAfterMs(res.headers.get("retry-after")) ?? backoff(attempt));
+          continue;
+        }
+        // 429: wait as long as the server asks, but only when it says how long (and not too long).
+        const wait = res.status === 429 ? retryAfterMs(res.headers.get("retry-after"), MAX_RATE_LIMIT_WAIT_MS) : undefined;
+        if (wait !== undefined) {
+          await sleep(wait);
+          continue;
+        }
       }
 
       const text = await res.text();
@@ -574,8 +700,9 @@ export class Fanout {
         const err = (data as { error?: { code?: string; message?: string; details?: unknown } } | undefined)?.error;
         throw new FanoutError(err?.message ?? `HTTP ${res.status}`, {
           status: res.status,
-          code: err?.code ?? "http_error",
+          code: err?.code ?? (res.status === 429 ? "rate_limited" : "http_error"),
           details: err?.details,
+          ...(res.status === 429 ? { rateLimit: rateLimitInfo(res.headers) } : {}),
         });
       }
       return data as T;
@@ -587,12 +714,36 @@ function backoff(attempt: number): number {
   return 500 * 2 ** attempt;
 }
 
-function retryAfterMs(header: string | null): number | undefined {
+/** Longest Retry-After the client waits on a 429 before it gives up and throws instead. */
+const MAX_RATE_LIMIT_WAIT_MS = 60_000;
+
+/**
+ * Parse Retry-After (seconds or an HTTP date). Without `max`, long waits are capped at 30 s.
+ * With `max`, a wait longer than max returns undefined (do not retry).
+ */
+function retryAfterMs(header: string | null, max?: number): number | undefined {
   if (!header) return undefined;
   const seconds = Number(header);
-  if (Number.isFinite(seconds)) return Math.min(seconds, 30) * 1000;
   const date = Date.parse(header);
-  return Number.isNaN(date) ? undefined : Math.min(Math.max(date - Date.now(), 0), 30_000);
+  const ms = Number.isFinite(seconds) ? seconds * 1000 : Number.isNaN(date) ? undefined : Math.max(date - Date.now(), 0);
+  if (ms === undefined || ms < 0) return undefined;
+  if (max !== undefined) return ms <= max ? ms : undefined;
+  return Math.min(ms, 30_000);
+}
+
+function headerNumber(headers: Headers, name: string): number | null {
+  const value = headers.get(name);
+  const n = value === null || value === "" ? NaN : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function rateLimitInfo(headers: Headers): RateLimitInfo {
+  return {
+    limit: headerNumber(headers, "x-ratelimit-limit"),
+    remaining: headerNumber(headers, "x-ratelimit-remaining"),
+    reset: headerNumber(headers, "x-ratelimit-reset"),
+    retryAfter: headerNumber(headers, "retry-after"),
+  };
 }
 
 /* ------------------------------------------------------------------ */

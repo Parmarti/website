@@ -28,6 +28,33 @@ model User {
   oauthStates  OAuthState[]
   posts        Post[]
   webhooks     Webhook[]
+  resetTokens  PasswordResetToken[]
+  media        Media[]
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// A file uploaded by a customer, stored by the storage driver and served at /media/<id>/<filename>.
+model Media {
+  id          String   @id
+  userId      String
+  filename    String
+  contentType String
+  size        Int
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 model Session {

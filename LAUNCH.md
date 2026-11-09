@@ -53,7 +53,9 @@ Check the competitor's current prices before you publish any comparison. Do not 
 
 To demo the dashboard with sample data on a local or staging database: `npx tsx scripts/dev-seed-analytics.ts you@example.com`.
 
-**Not built yet (roadmap, sell as "coming soon"):** inbox (comments and DMs), ads, WhatsApp, Snapchat, file upload endpoint (media is sent as public URLs), team members, password reset email (users email support for now).
+**Also built before launch:** API rate limits (300 requests and 60 writes per minute per account, 10 login tries per 15 minutes), password reset by email, account settings with self-serve deletion, media uploads (stored on a Railway volume, served at `/media/...`), and a GitHub Actions workflow that runs the typecheck, all tests, the build and a Docker image build on every push.
+
+**Not built yet (roadmap, sell as "coming soon"):** inbox (comments and DMs), ads, WhatsApp, Snapchat, team members.
 
 ---
 
@@ -70,6 +72,8 @@ To demo the dashboard with sample data on a local or staging database: `npx tsx 
    - `CRON_SECRET` = output of `openssl rand -hex 24`
    - `RUN_SCHEDULER=1`
    - `SUPPORT_EMAIL`
+   - `MEDIA_DIR=/data/uploads`, and add a **Volume** to the service mounted at `/data` (uploaded media is stored there)
+   - `RESEND_API_KEY` and `EMAIL_FROM` for password reset emails (resend.com: add and verify your domain, then create an API key). Without them, reset links are only written to the server log.
 5. Add your domain in Railway and point DNS to it.
 6. Open `https://yourdomain/api/health`. It must return `{"ok":true}`.
 

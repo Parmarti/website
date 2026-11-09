@@ -10,6 +10,7 @@ interface Recorded {
   query: Record<string, string>;
   headers: http.IncomingHttpHeaders;
   body: unknown;
+  raw: Buffer;
 }
 
 type Reply = { status: number; body?: unknown; headers?: Record<string, string> };
@@ -28,14 +29,18 @@ before(async () => {
   server = http.createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
-    const raw = Buffer.concat(chunks).toString("utf8");
+    const rawBuf = Buffer.concat(chunks);
+    const raw = rawBuf.toString("utf8");
     const url = new URL(req.url ?? "/", "http://localhost");
+    let body: unknown = undefined;
+    if (raw && String(req.headers["content-type"] ?? "").startsWith("application/json")) body = JSON.parse(raw);
     recorded.push({
       method: req.method ?? "",
       path: url.pathname,
       query: Object.fromEntries(url.searchParams),
       headers: req.headers,
-      body: raw ? JSON.parse(raw) : undefined,
+      body,
+      raw: rawBuf,
     });
     const key = `${req.method} ${url.pathname}`;
     const list = queue.get(key);
@@ -259,7 +264,7 @@ test("analytics.overview sends range and filters as query params", async () => {
     totals,
     coverage: { posts: 2, withMetrics: 2 },
     byPlatform: [{ platform: "twitter", ...totals }],
-    daily: [{ date: "2026-10-01", posts: 2, engagements: 30, impressions: 1000, views: 0 }],
+    daily: [{ date: "2026-10-01", posts: 2, engagements: 30, impressions: 1000, views: null }],
     topPosts: [],
     accounts: [{ accountId: "acc_1", platform: "twitter", name: "Jane", followers: 120, followersChange: 4, series: [], error: null }],
   };
@@ -324,4 +329,140 @@ test("analytics GETs retry on 503 like other GETs", async () => {
   const res = await client().analytics.post("flaky");
   assert.equal(res.postId, "flaky");
   assert.equal(recorded.length - before, 2);
+});
+
+const media = {
+  id: "med_abcdefghijklmnop",
+  url: "https://api.example.com/media/med_abcdefghijklmnop/launch.png",
+  type: "image",
+  filename: "launch.png",
+  contentType: "image/png",
+  size: 8,
+  createdAt: "2026-11-09T00:00:00.000Z",
+};
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+test("media.upload sends raw bytes with the content type guessed from the filename", async () => {
+  reply("POST /api/v1/media", { status: 201, body: { media } });
+  const res = await client().media.upload(PNG, { filename: "launch.png" });
+  assert.equal(res.url, media.url);
+  assert.equal(last().method, "POST");
+  assert.equal(last().path, "/api/v1/media");
+  assert.deepEqual(last().query, { filename: "launch.png" });
+  assert.equal(last().headers["content-type"], "image/png");
+  assert.deepEqual(last().raw, PNG);
+});
+
+test("media.upload uses a Blob's own type and accepts a stream with an explicit type", async () => {
+  reply("POST /api/v1/media", { status: 201, body: { media } });
+  await client().media.upload(new Blob([PNG], { type: "image/webp" }));
+  assert.equal(last().headers["content-type"], "image/webp");
+  assert.deepEqual(last().query, {});
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(PNG.subarray(0, 4)));
+      controller.enqueue(new Uint8Array(PNG.subarray(4)));
+      controller.close();
+    },
+  });
+  await client().media.upload(stream, { contentType: "video/mp4", filename: "clip.mp4" });
+  assert.equal(last().headers["content-type"], "video/mp4");
+  assert.deepEqual(last().raw, PNG);
+});
+
+test("media.upload refuses when the type cannot be told, without a request", async () => {
+  const before = recorded.length;
+  await assert.rejects(client().media.upload(PNG, { filename: "notes.txt" }), (err: unknown) => {
+    assert.ok(err instanceof FanoutError);
+    assert.equal(err.code, "unknown_content_type");
+    return true;
+  });
+  assert.equal(recorded.length, before);
+});
+
+test("media uploads are never retried", async () => {
+  const before = recorded.length;
+  reply("POST /api/v1/media", { status: 503, body: { error: { code: "internal_error", message: "busy" } }, headers: { "retry-after": "0" } });
+  await assert.rejects(client().media.upload(PNG, { filename: "a.png" }), (err: unknown) => err instanceof FanoutError && err.status === 503);
+  reply("POST /api/v1/media", { status: 429, body: { error: { code: "rate_limited", message: "slow down" } }, headers: { "retry-after": "0" } });
+  await assert.rejects(client().media.upload(PNG, { filename: "a.png" }), (err: unknown) => err instanceof FanoutError && err.status === 429);
+  assert.equal(recorded.length - before, 2);
+});
+
+test("media upload errors keep the server's code", async () => {
+  reply("POST /api/v1/media", { status: 415, body: { error: { code: "unsupported_type", message: "The file content is not a valid image/png file." } } });
+  await assert.rejects(client().media.upload(PNG, { filename: "a.png" }), (err: unknown) => err instanceof FanoutError && err.status === 415 && err.code === "unsupported_type");
+});
+
+test("media.list, get and delete", async () => {
+  const c = client();
+  reply("GET /api/v1/media", { status: 200, body: { media: [media], nextCursor: "next" } });
+  const page = await c.media.list({ limit: 10 });
+  assert.equal(page.media[0].id, media.id);
+  assert.equal(page.nextCursor, "next");
+  assert.deepEqual(last().query, { limit: "10" });
+  reply(`GET /api/v1/media/${media.id}`, { status: 200, body: { media } });
+  assert.equal((await c.media.get(media.id)).filename, "launch.png");
+  reply(`DELETE /api/v1/media/${media.id}`, { status: 200, body: { deleted: true } });
+  assert.deepEqual(await c.media.delete(media.id), { deleted: true });
+});
+
+const limited = (retryAfter?: string): Reply => ({
+  status: 429,
+  body: { error: { code: "rate_limited", message: "Too many requests. Try again in 1 seconds." } },
+  headers: { "x-ratelimit-limit": "300", "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1794245400", ...(retryAfter ? { "retry-after": retryAfter } : {}) },
+});
+
+test("GET retries a 429 when the server sends Retry-After", async () => {
+  const before = recorded.length;
+  reply("GET /api/v1/webhooks", limited("0"), { status: 200, body: { webhooks: [] } });
+  assert.deepEqual(await client().webhooks.list(), []);
+  assert.equal(recorded.length - before, 2);
+});
+
+test("429 without Retry-After is not retried and carries rate limit info", async () => {
+  const before = recorded.length;
+  reply("GET /api/v1/usage", limited());
+  await assert.rejects(client().usage.get(), (err: unknown) => {
+    assert.ok(err instanceof FanoutError);
+    assert.equal(err.status, 429);
+    assert.equal(err.code, "rate_limited");
+    assert.deepEqual(err.rateLimit, { limit: 300, remaining: 0, reset: 1794245400, retryAfter: null });
+    return true;
+  });
+  assert.equal(recorded.length - before, 1);
+});
+
+test("429 with a Retry-After longer than a minute is thrown, not waited out", async () => {
+  const before = recorded.length;
+  reply("GET /api/v1/accounts", limited("120"));
+  await assert.rejects(client().accounts.list(), (err: unknown) => err instanceof FanoutError && err.rateLimit?.retryAfter === 120);
+  assert.equal(recorded.length - before, 1);
+});
+
+test("posts.create retries a 429 only with an idempotency key", async () => {
+  let before = recorded.length;
+  reply("POST /api/v1/posts", limited("0"));
+  await assert.rejects(client().posts.create({ platforms: [{ accountId: "a" }] }), (err: unknown) => err instanceof FanoutError && err.status === 429);
+  assert.equal(recorded.length - before, 1);
+
+  before = recorded.length;
+  reply("POST /api/v1/posts", limited("0"), { status: 201, body: { post } });
+  const created = await client().posts.create({ platforms: [{ accountId: "a" }] }, { idempotencyKey: "k-429" });
+  assert.equal(created.id, "post_1");
+  assert.equal(recorded.length - before, 2);
+  assert.equal(last().headers["idempotency-key"], "k-429");
+});
+
+test("DELETE is not retried on 429", async () => {
+  const before = recorded.length;
+  reply("DELETE /api/v1/webhooks/wh_9", limited("0"));
+  await assert.rejects(client().webhooks.delete("wh_9"), FanoutError);
+  assert.equal(recorded.length - before, 1);
+});
+
+test("analytics.refreshPost passes the reason through", async () => {
+  reply("POST /api/v1/analytics/posts/post_2/refresh", { status: 200, body: { queued: 0, reason: "refreshed_recently" } });
+  assert.deepEqual(await client().analytics.refreshPost("post_2"), { queued: 0, reason: "refreshed_recently" });
 });

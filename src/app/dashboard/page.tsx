@@ -7,9 +7,9 @@ import { appUrl } from "@/lib/env";
 import { brand } from "@/lib/brand";
 import { Alert, Card, CodeBlock, LinkButton, PageHeader } from "@/components/ui";
 
-export default async function Overview({ searchParams }: { searchParams: Promise<{ welcome?: string }> }) {
+export default async function Overview({ searchParams }: { searchParams: Promise<{ welcome?: string; reset?: string }> }) {
   const user = await requireUser();
-  const { welcome } = await searchParams;
+  const { welcome, reset } = await searchParams;
   const plan = getPlan(user.plan);
   const [accounts, keys, posts, published] = await Promise.all([
     db.socialAccount.count({ where: { userId: user.id } }),
@@ -28,6 +28,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   return (
     <div className="space-y-6">
       <PageHeader title="Overview" description={`Welcome${user.name ? `, ${user.name}` : ""}. Here is where things stand.`} />
+      {reset ? <Alert tone="green">Your password was changed. Other devices were signed out.</Alert> : null}
       {welcome ? <Alert tone="green">Your account is ready. Follow the three steps below to send your first post.</Alert> : null}
 
       <div className="grid gap-4 sm:grid-cols-3">

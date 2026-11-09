@@ -28,6 +28,24 @@ export const WEBHOOK_EVENTS = [
 
 export const SIGNATURE_HEADER = "x-fanout-signature";
 
+/** Media types the API accepts, by file extension. */
+export const MEDIA_CONTENT_TYPES: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  webp: "image/webp",
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+};
+
+export function contentTypeFromFilename(filename?: string): string | undefined {
+  const ext = filename?.split(".").pop()?.toLowerCase();
+  return ext && filename!.includes(".") ? MEDIA_CONTENT_TYPES[ext] : undefined;
+}
+
 export function normalizeBaseUrl(url: string): string {
   return String(url || "").replace(/\/+$/, "");
 }

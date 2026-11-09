@@ -64,6 +64,24 @@ await fanout.posts.create({
 });
 ```
 
+## Upload media
+
+Upload a file once, then use its public `url` in `mediaItems`. JPEG, PNG, GIF, WebP (up to 20 MB) and MP4, MOV, WebM (up to 512 MB) by default.
+
+```ts
+import { readFile } from "node:fs/promises";
+
+const image = await fanout.media.upload(await readFile("launch.png"), { filename: "launch.png" });
+
+await fanout.posts.create({
+  content: "We just launched!",
+  mediaItems: [{ url: image.url, altText: "Screenshot of the new dashboard" }],
+  platforms: [{ accountId: "acc_123" }],
+});
+```
+
+`upload` also takes a `Blob`/`File` (its type is used) or a `ReadableStream` (pass `contentType`). The type is guessed from the file name when you do not pass `contentType`. Uploads are never retried automatically. `media.list()`, `media.get(id)` and `media.delete(id)` manage stored files.
+
 ## Track results
 
 ```ts
@@ -89,7 +107,7 @@ console.log(overview.totals.engagements, overview.totals.engagementRate); // e.g
 for (const p of overview.topPosts) console.log(p.platform, p.engagements, p.url);
 
 const stats = await fanout.analytics.post(post.id); // per-network metrics and history
-await fanout.analytics.refreshPost(post.id);         // ask for fresh numbers now
+const { queued, reason } = await fanout.analytics.refreshPost(post.id); // reason when queued is 0: "not_published" | "already_queued" | "refreshed_recently"
 const followers = await fanout.analytics.account("acc_123", { days: 90 });
 ```
 
@@ -136,13 +154,19 @@ try {
 | `status` | `code` | Meaning |
 |---|---|---|
 | 0 | `network_error` | Could not reach the API (or timeout) |
-| 400 | `validation_error`, `invalid_json`, `invalid_redirect`, `connect_unavailable`, `invalid_url` | Bad input |
+| 0 | `unknown_content_type` | `media.upload` could not tell the file type (pass `contentType`) |
+| 400 | `validation_error`, `invalid_json`, `invalid_redirect`, `connect_unavailable`, `invalid_url`, `invalid_upload` | Bad input |
 | 401 | `unauthorized` | Missing or invalid API key |
 | 402 | `plan_limit` | Plan limit reached |
 | 404 | `not_found`, `unknown_platform` | Not found |
-| 422 | `validation_error` | A network cannot accept the post (`details` per account) |
+| 413 | `too_large` | Upload is over the size limit, or storage is full |
+| 415 | `unsupported_type` | Upload type not allowed, or content does not match the type |
+| 422 | `platform_rejected` | A network cannot accept the post (`details` per account) |
+| 429 | `rate_limited` | Too many requests (`err.rateLimit` has `limit`, `remaining`, `reset`, `retryAfter`) |
 
-GET requests are retried up to 2 times on network errors, 429 and 5xx (honouring `Retry-After`). POST, PATCH and DELETE are never retried automatically. Change this with `maxRetries`; change the timeout with `timeoutMs` (default 60 s).
+The API allows 300 requests per minute per account, of which 60 can be writes (your operator may set other numbers).
+
+Retries: requests that are safe to repeat (GET, and `posts.create` with an `idempotencyKey`) are retried up to 2 times on network errors and 5xx, and on 429 when the server sends `Retry-After` (up to 60 s). Other writes and uploads are never retried. Change the count with `maxRetries`; change the timeout with `timeoutMs` (default 60 s).
 
 ## Webhooks
 
@@ -197,6 +221,7 @@ app.post("/webhooks/fanout", express.raw({ type: "application/json" }), (req, re
 | `webhooks` | `list()`, `create({ url, events? })`, `delete(id)`, `test(id)` |
 | `usage` | `get()` |
 | `analytics` | `overview({ from?, to?, days?, profileId?, platform?, accountId?, timezone? })`, `post(id)`, `refreshPost(id)`, `account(id, { from?, to?, days? })` |
+| `media` | `upload(data, { filename?, contentType? })`, `list({ limit?, cursor? })`, `get(id)`, `delete(id)` |
 
 Methods return the resource itself (for example `posts.get` returns a `Post`, not `{ post }`). The full OpenAPI spec is served at `/openapi.json` on your API domain.
 

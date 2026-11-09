@@ -123,6 +123,29 @@ export function Composer({ accounts }: { accounts: ComposerAccount[] }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [when, setWhen] = useState("now");
   const [content, setContent] = useState("");
+  const [mediaUrls, setMediaUrls] = useState("");
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  async function upload(files: FileList | null) {
+    if (!files?.length) return;
+    setUploadError(null);
+    for (const file of Array.from(files)) {
+      setUploading(file.name);
+      const body = new FormData();
+      body.append("file", file);
+      try {
+        const res = await fetch("/api/dashboard/media", { method: "POST", body });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+        setMediaUrls((prev) => [prev.trim(), data.media.url].filter(Boolean).join("\n"));
+      } catch (err) {
+        setUploadError(`${file.name}: ${(err as Error).message}`);
+        break;
+      }
+    }
+    setUploading(null);
+  }
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", []);
   const platforms = new Set(accounts.filter((a) => selected.includes(a.id)).map((a) => a.platform));
   const boards = accounts.filter((a) => selected.includes(a.id) && a.boards?.length).flatMap((a) => a.boards!);
@@ -161,8 +184,16 @@ export function Composer({ accounts }: { accounts: ComposerAccount[] }) {
         <Textarea id="content" name="content" rows={5} value={content} onChange={(e) => setContent(e.target.value)} placeholder="What do you want to share?" />
       </div>
       <div>
-        <Label htmlFor="mediaUrls" hint="Public image or video URLs, one per line. Video is detected from the file extension.">Media URLs</Label>
-        <Textarea id="mediaUrls" name="mediaUrls" rows={2} placeholder="https://cdn.example.com/photo.jpg" />
+        <Label htmlFor="mediaUrls" hint="Upload files, or paste public image or video URLs, one per line.">Media</Label>
+        <Textarea id="mediaUrls" name="mediaUrls" rows={2} value={mediaUrls} onChange={(e) => setMediaUrls(e.target.value)} placeholder="https://cdn.example.com/photo.jpg" />
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
+          <label className={`inline-flex cursor-pointer items-center rounded-lg border border-line bg-white px-3 py-1.5 font-medium hover:bg-wash ${uploading ? "pointer-events-none opacity-60" : ""}`}>
+            <input type="file" multiple accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/webm" className="sr-only" onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
+            {uploading ? `Uploading ${uploading}...` : "Upload files"}
+          </label>
+          <span className="text-xs text-muted">JPEG, PNG, GIF, WebP up to 20 MB. MP4, MOV, WebM up to 512 MB.</span>
+        </div>
+        {uploadError ? <p className="mt-1 text-sm text-bad">{uploadError}</p> : null}
       </div>
       {platforms.has("youtube") || platforms.has("pinterest") || platforms.has("reddit") ? (
         <div className="grid gap-3 sm:grid-cols-2">
@@ -202,7 +233,7 @@ export function Composer({ accounts }: { accounts: ComposerAccount[] }) {
             <input type="hidden" name="timezone" value={timezone} />
           </div>
         ) : null}
-        <Button disabled={pending || selected.length === 0}>{pending ? "Saving..." : when === "now" ? "Publish" : when === "later" ? "Schedule" : "Save draft"}</Button>
+        <Button disabled={pending || selected.length === 0 || Boolean(uploading)}>{pending ? "Saving..." : when === "now" ? "Publish" : when === "later" ? "Schedule" : "Save draft"}</Button>
       </div>
       <Result state={state} />
     </form>

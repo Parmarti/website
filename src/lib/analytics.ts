@@ -3,6 +3,7 @@ import { db } from "./db";
 import { getAdapter, type PostMetrics, type AccountMetrics } from "./platforms";
 import { PlatformError, chunk } from "./platforms/http";
 import { buildPublishContext, markAccountExpired } from "./accounts";
+import { hit } from "./rate-limit";
 
 export const METRIC_KEYS = ["impressions", "reach", "views", "likes", "comments", "shares", "saves", "clicks", "quotes"] as const;
 export type MetricKey = (typeof METRIC_KEYS)[number];
@@ -217,19 +218,30 @@ export async function collectAnalytics() {
 }
 
 /** Ask for fresh numbers now (at most once per 5 minutes per target). */
-export async function requestRefresh(userId: string, postId: string): Promise<number | null> {
+export async function requestRefresh(userId: string, postId: string): Promise<{ queued: number; reason?: string } | null> {
   const post = await db.post.findFirst({ where: { id: postId, userId }, select: { id: true } });
   if (!post) return null;
+  const published = await db.postTarget.count({ where: { postId, status: "published", platformPostId: { not: null } } });
+  if (published === 0) return { queued: 0, reason: "not_published" };
+  // One refresh per post every 5 minutes, whatever state the collection is in.
+  if (!hit(`refresh:${postId}`, 1, 5 * MIN).ok) return { queued: 0, reason: "refreshed_recently" };
+  const now = new Date();
   const { count } = await db.postTarget.updateMany({
     where: {
       postId,
       status: "published",
       platformPostId: { not: null },
-      OR: [{ metricsUpdatedAt: null }, { metricsUpdatedAt: { lt: new Date(Date.now() - 5 * MIN) } }],
+      AND: [
+        { OR: [{ metricsUpdatedAt: null }, { metricsUpdatedAt: { lt: new Date(now.getTime() - 5 * MIN) } }] },
+        // Skip targets that are already waiting for collection (NULL means no collection is scheduled).
+        { OR: [{ metricsNextAt: null }, { metricsNextAt: { gt: now } }] },
+      ],
     },
-    data: { metricsNextAt: new Date() },
+    data: { metricsNextAt: now },
   });
-  return count;
+  if (count > 0) return { queued: count };
+  const waiting = await db.postTarget.count({ where: { postId, status: "published", metricsNextAt: { lte: now } } });
+  return { queued: 0, reason: waiting > 0 ? "already_queued" : "refreshed_recently" };
 }
 
 /* ---------- Queries ---------- */
@@ -318,13 +330,13 @@ export async function getOverview(userId: string, f: AnalyticsFilters) {
 
   const totals = emptyTotals();
   const byPlatform = new Map<string, Totals>();
-  const daily = new Map<string, { date: string; posts: number; engagements: number; impressions: number; views: number }>();
+  const daily = new Map<string, { date: string; posts: number; engagements: number; impressions: number | null; views: number | null }>();
   for (let d = new Date(f.from); d <= f.to; d = new Date(d.getTime() + DAY)) {
     const key = dayKey(d, timeZone);
-    daily.set(key, { date: key, posts: 0, engagements: 0, impressions: 0, views: 0 });
+    daily.set(key, { date: key, posts: 0, engagements: 0, impressions: null, views: null });
   }
   const lastKey = dayKey(f.to, timeZone);
-  if (!daily.has(lastKey)) daily.set(lastKey, { date: lastKey, posts: 0, engagements: 0, impressions: 0, views: 0 });
+  if (!daily.has(lastKey)) daily.set(lastKey, { date: lastKey, posts: 0, engagements: 0, impressions: null, views: null });
 
   let withMetrics = 0;
   for (const t of targets) {
@@ -338,8 +350,8 @@ export async function getOverview(userId: string, f: AnalyticsFilters) {
     if (day) {
       day.posts++;
       day.engagements += engagementsOf(m);
-      day.impressions += m?.impressions ?? 0;
-      day.views += m?.views ?? 0;
+      if (typeof m?.impressions === "number") day.impressions = (day.impressions ?? 0) + m.impressions;
+      if (typeof m?.views === "number") day.views = (day.views ?? 0) + m.views;
     }
   }
 

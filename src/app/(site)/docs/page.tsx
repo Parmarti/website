@@ -13,6 +13,7 @@ const toc = [
   ["posts", "Creating posts"],
   ["platform-options", "Platform options"],
   ["manage-posts", "Managing posts"],
+  ["media", "Uploading media"],
   ["analytics", "Analytics"],
   ["accounts", "Accounts and profiles"],
   ["webhooks", "Webhooks"],
@@ -183,6 +184,25 @@ export default function Docs() {
           </tbody>
         </table>
 
+        <h2 id="media">Uploading media</h2>
+        <p>
+          Posts take media as public URLs. If your files are not online yet, upload them first and use the returned <code>url</code> in{" "}
+          <code>mediaItems</code>. Allowed: JPEG, PNG, GIF and WebP up to 20 MB, MP4, MOV and WebM up to 512 MB. We check that the file content matches its type.
+        </p>
+        <CodeBlock>{`# Raw bytes (best for large videos)
+curl -X POST "${base}/media?filename=launch.mp4" \\
+  -H "Authorization: Bearer ${key}" -H "Content-Type: video/mp4" \\
+  --data-binary @launch.mp4
+
+# Or a form upload
+curl -X POST ${base}/media -H "Authorization: Bearer ${key}" -F "file=@photo.jpg"
+
+201 Created
+{ "media": { "id": "...", "url": "${appUrl()}/media/.../photo.jpg", "type": "image", "size": 48213 } }`}</CodeBlock>
+        <p>
+          <code>GET /media</code> lists your files and <code>DELETE /media/:id</code> removes one. Deleting a file does not remove posts that are already published.
+        </p>
+
         <h2 id="analytics">Analytics</h2>
         <p>
           We collect metrics for every published post automatically: about 20 minutes after it goes live, then every 30 minutes for the first 6 hours, every 2 hours
@@ -320,9 +340,16 @@ claude mcp add --transport http ${brand.name.toLowerCase()} ${appUrl()}/api/mcp 
             <tr><td><code>401</code></td><td>Missing or invalid API key.</td></tr>
             <tr><td><code>402</code></td><td>Plan limit reached (<code>plan_limit</code>). Upgrade in the dashboard.</td></tr>
             <tr><td><code>404</code></td><td>Not found, or it belongs to another user.</td></tr>
+            <tr><td><code>413</code></td><td>File too large, or your media storage is full (<code>too_large</code>).</td></tr>
+            <tr><td><code>415</code></td><td>File type not allowed, or the file content does not match its type (<code>unsupported_type</code>).</td></tr>
             <tr><td><code>422</code></td><td>A network cannot accept the post (<code>platform_rejected</code>). <code>details</code> lists problems per account.</td></tr>
+            <tr><td><code>429</code></td><td>Too many requests (<code>rate_limited</code>). Wait for the seconds in the <code>Retry-After</code> header.</td></tr>
           </tbody>
         </table>
+        <p>
+          Rate limits: 300 requests per minute per account, of which at most 60 can be writes (POST, PATCH, DELETE). Every response has{" "}
+          <code>X-RateLimit-Limit</code>, <code>X-RateLimit-Remaining</code> and <code>X-RateLimit-Reset</code> headers. Need more? Email us.
+        </p>
 
         <h2 id="networks">Network setup</h2>
         <p>Some networks review developer apps before they allow public posting. This is what each one needs:</p>

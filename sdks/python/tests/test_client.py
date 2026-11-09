@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 import threading
 import unittest
 from datetime import datetime
@@ -32,7 +34,8 @@ class Handler(BaseHTTPRequestHandler):
                 "path": parts.path,
                 "query": dict(parse_qsl(parts.query)),
                 "headers": dict(self.headers),
-                "body": json.loads(raw) if raw else None,
+                "body": json.loads(raw) if raw and (self.headers.get("Content-Type") or "").startswith("application/json") else None,
+                "raw": raw,
             }
         )
         queue = REPLIES.get(f"{self.command} {parts.path}")
@@ -289,3 +292,129 @@ class ClientTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+MEDIA = {
+    "id": "med_abcdefghijklmnop",
+    "url": "https://api.example.com/media/med_abcdefghijklmnop/launch.png",
+    "type": "image",
+    "filename": "launch.png",
+    "contentType": "image/png",
+    "size": 8,
+    "createdAt": "2026-11-09T00:00:00.000Z",
+}
+PNG = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+
+
+def limited(retry_after=None):
+    headers = {"X-RateLimit-Limit": "300", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1794245400"}
+    if retry_after is not None:
+        headers["Retry-After"] = retry_after
+    return (429, {"error": {"code": "rate_limited", "message": "Too many requests."}}, headers)
+
+
+class MediaAndRateLimitTest(unittest.TestCase):
+    # Reuse the mock server helpers without running ClientTest's tests a second time.
+    setUpClass = classmethod(ClientTest.setUpClass.__func__)
+    tearDownClass = classmethod(ClientTest.tearDownClass.__func__)
+    client = ClientTest.client
+    last = ClientTest.last
+
+    def test_upload_bytes_with_filename(self):
+        reply("POST /api/v1/media", (201, {"media": MEDIA}, {}))
+        media = self.client().media.upload(PNG, filename="launch.png")
+        self.assertEqual(media["url"], MEDIA["url"])
+        self.assertEqual(self.last()["method"], "POST")
+        self.assertEqual(self.last()["path"], "/api/v1/media")
+        self.assertEqual(self.last()["query"], {"filename": "launch.png"})
+        self.assertEqual(self.last()["headers"]["Content-Type"], "image/png")
+        self.assertEqual(self.last()["raw"], PNG)
+
+    def test_upload_path_and_file_object(self):
+        reply("POST /api/v1/media", (201, {"media": MEDIA}, {}))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "clip.MOV")
+            with open(path, "wb") as f:
+                f.write(PNG)
+            self.client().media.upload(path)
+            self.assertEqual(self.last()["query"], {"filename": "clip.MOV"})
+            self.assertEqual(self.last()["headers"]["Content-Type"], "video/quicktime")
+            with open(path, "rb") as f:
+                self.client().media.upload(f, content_type="video/mp4")
+            self.assertEqual(self.last()["headers"]["Content-Type"], "video/mp4")
+            self.assertEqual(self.last()["raw"], PNG)
+
+    def test_upload_unknown_type_raises_without_request(self):
+        before = len(RECORDED)
+        with self.assertRaises(FanoutError) as ctx:
+            self.client().media.upload(PNG, filename="notes.txt")
+        self.assertEqual(ctx.exception.code, "unknown_content_type")
+        self.assertEqual(len(RECORDED), before)
+
+    def test_upload_is_never_retried(self):
+        before = len(RECORDED)
+        reply("POST /api/v1/media", (503, {"error": {"code": "internal_error", "message": "busy"}}, {"Retry-After": "0"}))
+        with self.assertRaises(FanoutError):
+            self.client().media.upload(PNG, filename="a.png")
+        reply("POST /api/v1/media", limited("0"))
+        with self.assertRaises(FanoutError):
+            self.client().media.upload(PNG, filename="a.png")
+        self.assertEqual(len(RECORDED) - before, 2)
+
+    def test_upload_error_code(self):
+        reply("POST /api/v1/media", (413, {"error": {"code": "too_large", "message": "File is too large."}}, {}))
+        with self.assertRaises(FanoutError) as ctx:
+            self.client().media.upload(PNG, filename="a.png")
+        self.assertEqual((ctx.exception.status, ctx.exception.code), (413, "too_large"))
+
+    def test_media_list_get_delete(self):
+        c = self.client()
+        reply("GET /api/v1/media", (200, {"media": [MEDIA], "nextCursor": None}, {}))
+        page = c.media.list(limit=10)
+        self.assertEqual(page["media"][0]["id"], MEDIA["id"])
+        self.assertEqual(self.last()["query"], {"limit": "10"})
+        reply(f"GET /api/v1/media/{MEDIA['id']}", (200, {"media": MEDIA}, {}))
+        self.assertEqual(c.media.get(MEDIA["id"])["filename"], "launch.png")
+        reply(f"DELETE /api/v1/media/{MEDIA['id']}", (200, {"deleted": True}, {}))
+        self.assertEqual(c.media.delete(MEDIA["id"]), {"deleted": True})
+
+    def test_get_retries_429_with_retry_after(self):
+        before = len(RECORDED)
+        reply("GET /api/v1/webhooks", limited("0"), (200, {"webhooks": []}, {}))
+        self.assertEqual(self.client().webhooks.list(), [])
+        self.assertEqual(len(RECORDED) - before, 2)
+
+    def test_429_without_retry_after_raises_with_rate_limit_info(self):
+        before = len(RECORDED)
+        reply("GET /api/v1/usage", limited())
+        with self.assertRaises(FanoutError) as ctx:
+            self.client().usage.get()
+        err = ctx.exception
+        self.assertEqual((err.status, err.code), (429, "rate_limited"))
+        self.assertEqual(err.rate_limit, {"limit": 300, "remaining": 0, "reset": 1794245400, "retry_after": None})
+        self.assertEqual(len(RECORDED) - before, 1)
+
+    def test_429_with_long_retry_after_is_not_waited_out(self):
+        before = len(RECORDED)
+        reply("GET /api/v1/accounts", limited("120"))
+        with self.assertRaises(FanoutError) as ctx:
+            self.client().accounts.list()
+        self.assertEqual(ctx.exception.rate_limit["retry_after"], 120)
+        self.assertEqual(len(RECORDED) - before, 1)
+
+    def test_post_create_retries_429_only_with_idempotency_key(self):
+        before = len(RECORDED)
+        reply("POST /api/v1/posts", limited("0"))
+        with self.assertRaises(FanoutError):
+            self.client().posts.create(platforms=[{"accountId": "a"}])
+        self.assertEqual(len(RECORDED) - before, 1)
+        before = len(RECORDED)
+        reply("POST /api/v1/posts", limited("0"), (201, {"post": POST}, {}))
+        created = self.client().posts.create(platforms=[{"accountId": "a"}], idempotency_key="k-429")
+        self.assertEqual(created["id"], "post_1")
+        self.assertEqual(len(RECORDED) - before, 2)
+        self.assertEqual(self.last()["headers"]["Idempotency-Key"], "k-429")
+
+    def test_refresh_post_reason(self):
+        reply("POST /api/v1/analytics/posts/post_2/refresh", (200, {"queued": 0, "reason": "refreshed_recently"}, {}))
+        self.assertEqual(self.client().analytics.refresh_post("post_2"), {"queued": 0, "reason": "refreshed_recently"})

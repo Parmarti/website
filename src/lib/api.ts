@@ -5,6 +5,7 @@ import { sha256 } from "./crypto";
 import type { User } from "@prisma/client";
 import { PostValidationError } from "./posts";
 import { LimitError } from "./accounts";
+import { checkApiLimit, rateHeaders } from "./rate-limit";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public code = "error", public details?: unknown) {
@@ -35,8 +36,17 @@ export function apiRoute<C = Record<string, string>>(handler: Handler<C>) {
   return async (req: NextRequest, context: { params: Promise<C> }) => {
     try {
       const user = await authenticateApiKey(req);
+      const limit = checkApiLimit(user.id, req.method);
+      if (!limit.ok) {
+        return NextResponse.json(
+          { error: { code: "rate_limited", message: `Too many requests. Try again in ${limit.retryAfter} seconds.` } },
+          { status: 429, headers: rateHeaders(limit) },
+        );
+      }
       const params = context?.params ? await context.params : ({} as C);
-      return await handler(req, { user, params });
+      const res = await handler(req, { user, params });
+      for (const [k, v] of Object.entries(rateHeaders(limit))) res.headers.set(k, v);
+      return res;
     } catch (err) {
       return errorResponse(err);
     }

@@ -35,8 +35,14 @@ const idParam = (description: string) => ({
 
 const commonErrors = {
   "401": errorResponse("Missing or invalid API key (`unauthorized`)."),
+  "429": { $ref: "#/components/responses/RateLimited" },
   "500": errorResponse("Unexpected server error (`internal_error`)."),
 };
+
+const RATE_LIMIT_NOTE =
+  "Rate limits: 300 requests per minute per account, of which at most 60 can be writes (POST, PATCH, DELETE). The operator can change these numbers. Every response carries X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset; a 429 response also carries Retry-After.";
+
+const MEDIA_TYPES_NOTE = "Allowed types: JPEG, PNG, GIF and WebP images (up to 20 MB) and MP4, MOV and WebM videos (up to 512 MB). The file content must match its type. The operator can change the size limits and the storage quota per account.";
 
 const notFound = { "404": errorResponse("Not found, or it belongs to another user (`not_found`).") };
 
@@ -85,7 +91,7 @@ export function openApiDocument(baseUrl: string) {
     info: {
       title: `${brand.name} API`,
       version: "1.0.0",
-      description: `${brand.description}\n\nAuthenticate with \`Authorization: Bearer <API key>\`. Errors use HTTP status codes and the body \`{ "error": { "code", "message", "details" } }\`.`,
+      description: `${brand.description}\n\nAuthenticate with \`Authorization: Bearer <API key>\`. Errors use HTTP status codes and the body \`{ "error": { "code", "message", "details" } }\`.\n\n${RATE_LIMIT_NOTE}`,
       contact: { email: brand.supportEmail },
     },
     servers: [{ url: `${base}/api/v1` }],
@@ -99,6 +105,7 @@ export function openApiDocument(baseUrl: string) {
       { name: "Webhooks", description: "Signed event notifications." },
       { name: "Usage", description: "Plan limits and usage." },
       { name: "Analytics", description: "Post metrics and follower growth, collected from each network on a schedule." },
+      { name: "Media", description: "Upload images and videos, then use their `url` in a post's mediaItems." },
     ],
     paths: {
       "/posts": {
@@ -489,13 +496,21 @@ export function openApiDocument(baseUrl: string) {
           tags: ["Analytics"],
           summary: "Fetch fresh metrics for a post now",
           description:
-            "Queues the post's published targets for an immediate metrics fetch. Targets updated less than 5 minutes ago are skipped, so `queued` can be 0. Read the result with GET /analytics/posts/{id} a few seconds later.",
+            "Queues the post's published targets for an immediate metrics fetch. Targets updated less than 5 minutes ago are skipped, so `queued` can be 0; `reason` then says why. Read the result with GET /analytics/posts/{id} a few seconds later.",
           parameters: [idParam("Post id.")],
           responses: {
-            "200": jsonResponse(
-              "Number of targets queued.",
-              { type: "object", required: ["queued"], properties: { queued: { type: "integer", minimum: 0 } } },
-            ),
+            "200": jsonResponse("Number of targets queued.", {
+              type: "object",
+              required: ["queued"],
+              properties: {
+                queued: { type: "integer", minimum: 0 },
+                reason: {
+                  type: "string",
+                  enum: ["not_published", "already_queued", "refreshed_recently"],
+                  description: "Only when `queued` is 0. `not_published`: the post has no published targets to measure. `already_queued`: a metrics fetch is already waiting for this post. `refreshed_recently`: every target was updated less than 5 minutes ago.",
+                },
+              },
+            }),
             ...notFound,
             ...commonErrors,
           },
@@ -515,8 +530,100 @@ export function openApiDocument(baseUrl: string) {
           },
         },
       },
+      "/media": {
+        post: {
+          operationId: "uploadMedia",
+          tags: ["Media"],
+          summary: "Upload an image or video",
+          description: `Send the file in one of two ways: \`multipart/form-data\` with the file in a field named \`file\`, or the raw bytes as the body with the file's own Content-Type (for example \`image/png\`) and an optional \`filename\` query parameter. The returned \`url\` is public and can be used in a post's mediaItems. ${MEDIA_TYPES_NOTE}`,
+          parameters: [queryParam("filename", "File name for raw uploads, e.g. `launch.png`. Ignored for multipart uploads, which use the file's own name.")],
+          requestBody: {
+            required: true,
+            content: {
+              "multipart/form-data": {
+                schema: { type: "object", required: ["file"], properties: { file: { type: "string", format: "binary", description: "The file." } } },
+              },
+              "image/jpeg": { schema: { type: "string", format: "binary" } },
+              "image/png": { schema: { type: "string", format: "binary" } },
+              "image/gif": { schema: { type: "string", format: "binary" } },
+              "image/webp": { schema: { type: "string", format: "binary" } },
+              "video/mp4": { schema: { type: "string", format: "binary" } },
+              "video/quicktime": { schema: { type: "string", format: "binary" } },
+              "video/webm": { schema: { type: "string", format: "binary" } },
+            },
+          },
+          responses: {
+            "201": jsonResponse("File stored.", { type: "object", required: ["media"], properties: { media: ref("Media") } }),
+            "400": errorResponse("No file or an empty file (`invalid_upload`)."),
+            "413": errorResponse("File larger than the limit, or the account's storage is full (`too_large`)."),
+            "415": errorResponse("Type not allowed, or the content does not match the type (`unsupported_type`)."),
+            ...commonErrors,
+          },
+        },
+        get: {
+          operationId: "listMedia",
+          tags: ["Media"],
+          summary: "List uploaded files",
+          description: "Newest first. Use `nextCursor` as `cursor` to get the next page.",
+          parameters: [
+            { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 50 } },
+            { name: "cursor", in: "query", schema: { type: "string" } },
+          ],
+          responses: {
+            "200": jsonResponse("One page of files.", {
+              type: "object",
+              required: ["media", "nextCursor"],
+              properties: { media: { type: "array", items: ref("Media") }, nextCursor: { type: ["string", "null"] } },
+            }),
+            ...commonErrors,
+          },
+        },
+      },
+      "/media/{id}": {
+        get: {
+          operationId: "getMedia",
+          tags: ["Media"],
+          summary: "Get one uploaded file",
+          parameters: [idParam("Media id.")],
+          responses: {
+            "200": jsonResponse("The file.", { type: "object", required: ["media"], properties: { media: ref("Media") } }),
+            ...notFound,
+            ...commonErrors,
+          },
+        },
+        delete: {
+          operationId: "deleteMedia",
+          tags: ["Media"],
+          summary: "Delete an uploaded file",
+          description: "Deletes the stored file and its URL stops working. Posts already published keep their copy on the networks.",
+          parameters: [idParam("Media id.")],
+          responses: {
+            "200": jsonResponse("Deleted.", { type: "object", required: ["deleted"], properties: { deleted: { type: "boolean", const: true } } }),
+            ...notFound,
+            ...commonErrors,
+          },
+        },
+      },
     },
     components: {
+      headers: {
+        "X-RateLimit-Limit": { description: "Requests allowed in the current one-minute window.", schema: { type: "integer" } },
+        "X-RateLimit-Remaining": { description: "Requests left in the current window.", schema: { type: "integer" } },
+        "X-RateLimit-Reset": { description: "Unix time (seconds) when the window resets.", schema: { type: "integer" } },
+        "Retry-After": { description: "Seconds to wait before the next request.", schema: { type: "integer" } },
+      },
+      responses: {
+        RateLimited: {
+          description: `Too many requests (\`rate_limited\`). Wait for the number of seconds in Retry-After, then try again. ${RATE_LIMIT_NOTE}`,
+          headers: {
+            "Retry-After": { $ref: "#/components/headers/Retry-After" },
+            "X-RateLimit-Limit": { $ref: "#/components/headers/X-RateLimit-Limit" },
+            "X-RateLimit-Remaining": { $ref: "#/components/headers/X-RateLimit-Remaining" },
+            "X-RateLimit-Reset": { $ref: "#/components/headers/X-RateLimit-Reset" },
+          },
+          content: { "application/json": { schema: ref("Error") } },
+        },
+      },
       securitySchemes: {
         bearerAuth: { type: "http", scheme: "bearer", description: `API key from the dashboard, e.g. \`${brand.apiKeyPrefix}...\`` },
       },
@@ -736,7 +843,7 @@ export function openApiDocument(baseUrl: string) {
             },
             daily: {
               type: "array",
-              description: "One entry per day in the range (by publish date, in `timezone`). Missing metrics count as 0 here.",
+              description: "One entry per day in the range (by publish date, in `timezone`). `impressions` and `views` are null when no post published that day reported the metric.",
               items: {
                 type: "object",
                 required: ["date", "posts", "engagements", "impressions", "views"],
@@ -744,8 +851,8 @@ export function openApiDocument(baseUrl: string) {
                   date: { type: "string", format: "date" },
                   posts: { type: "integer" },
                   engagements: { type: "number" },
-                  impressions: { type: "number" },
-                  views: { type: "number" },
+                  impressions: { type: ["number", "null"] },
+                  views: { type: ["number", "null"] },
                 },
               },
             },
@@ -873,6 +980,19 @@ export function openApiDocument(baseUrl: string) {
             data: { description: "A Post for post.* events, an Account for account.* events." },
           },
         },
+        Media: {
+          type: "object",
+          required: ["id", "url", "type", "filename", "contentType", "size", "createdAt"],
+          properties: {
+            id: { type: "string" },
+            url: { type: "string", format: "uri", description: "Public URL of the file. Use it in a post's mediaItems." },
+            type: { type: "string", enum: ["image", "video"] },
+            filename: { type: "string", description: "Cleaned file name with an extension that matches the type." },
+            contentType: { type: "string", enum: ["image/jpeg", "image/png", "image/gif", "image/webp", "video/mp4", "video/quicktime", "video/webm"] },
+            size: { type: "integer", description: "Size in bytes." },
+            createdAt: { type: "string", format: "date-time" },
+          },
+        },
         Error: {
           type: "object",
           required: ["error"],
@@ -884,7 +1004,7 @@ export function openApiDocument(baseUrl: string) {
                 code: {
                   type: "string",
                   description:
-                    "unauthorized, invalid_json, validation_error, platform_rejected, plan_limit, not_found, unknown_platform, invalid_redirect, connect_unavailable, invalid_url, limit, internal_error",
+                    "unauthorized, rate_limited, invalid_json, validation_error, platform_rejected, plan_limit, not_found, unknown_platform, invalid_redirect, connect_unavailable, invalid_url, limit, invalid_upload, too_large, unsupported_type, internal_error",
                 },
                 message: { type: "string" },
                 details: { description: "Extra information, e.g. per-account problems for 422 responses." },

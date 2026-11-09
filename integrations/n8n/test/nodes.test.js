@@ -291,3 +291,63 @@ test("analytics overview sends the range and filters, post analytics hits the po
   assert.equal(post.calls[0].url, `${BASE}/api/v1/analytics/posts/post%2F1`);
   assert.equal(postOut[0].json.postId, "post/1");
 });
+
+function withBinary(ctx, files) {
+  ctx.helpers.assertBinaryData = (_i, prop) => {
+    if (!files[prop]) throw new Error(`No binary data property "${prop}"`);
+    return files[prop].meta;
+  };
+  ctx.helpers.getBinaryDataBuffer = async (_i, prop) => files[prop].buffer;
+  return ctx;
+}
+
+const MEDIA = { id: "med_abcdefghijklmnop", url: `${BASE}/media/med_abcdefghijklmnop/a.png`, type: "image", filename: "a.png", contentType: "image/png", size: 8 };
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+test("media upload sends the binary as the raw body with its type and name", async () => {
+  const ctx = withBinary(
+    fakeContext({ params: { resource: "media", operation: "upload", binaryPropertyName: "data", uploadOptions: {} }, responses: [{ media: MEDIA }] }),
+    { data: { meta: { fileName: "a.png", mimeType: "image/png" }, buffer: PNG } },
+  );
+  const [out] = await new Fanout().execute.call(ctx);
+  const call = ctx.calls[0];
+  assert.equal(call.credType, "fanoutApi");
+  assert.equal(call.method, "POST");
+  assert.equal(call.url, `${BASE}/api/v1/media`);
+  assert.equal(call.headers["Content-Type"], "image/png");
+  assert.deepEqual(call.qs, { filename: "a.png" });
+  assert.equal(call.json, false);
+  assert.ok(Buffer.isBuffer(call.body) && call.body.equals(PNG));
+  assert.equal(out[0].json.url, MEDIA.url);
+});
+
+test("media upload parses a string response and honours option overrides", async () => {
+  const ctx = withBinary(
+    fakeContext({
+      params: { resource: "media", operation: "upload", binaryPropertyName: "video", uploadOptions: { fileName: "launch.mp4", contentType: "video/mp4" } },
+      responses: [JSON.stringify({ media: { ...MEDIA, type: "video" } })],
+    }),
+    { video: { meta: { fileName: "raw.bin", mimeType: "application/octet-stream" }, buffer: PNG } },
+  );
+  const [out] = await new Fanout().execute.call(ctx);
+  assert.equal(ctx.calls[0].headers["Content-Type"], "video/mp4");
+  assert.deepEqual(ctx.calls[0].qs, { filename: "launch.mp4" });
+  assert.equal(out[0].json.type, "video");
+});
+
+test("media upload without a known type fails before any request", async () => {
+  const ctx = withBinary(
+    fakeContext({ params: { resource: "media", operation: "upload", binaryPropertyName: "data", uploadOptions: {} } }),
+    { data: { meta: { fileName: "notes" }, buffer: PNG } },
+  );
+  await assert.rejects(new Fanout().execute.call(ctx), /Cannot tell the file type/);
+  assert.equal(ctx.calls.length, 0);
+});
+
+test("media delete hits the media path", async () => {
+  const ctx = fakeContext({ params: { resource: "media", operation: "delete", mediaId: "med_abcdefghijklmnop" }, responses: [{ deleted: true }] });
+  const [out] = await new Fanout().execute.call(ctx);
+  assert.equal(ctx.calls[0].method, "DELETE");
+  assert.equal(ctx.calls[0].url, `${BASE}/api/v1/media/med_abcdefghijklmnop`);
+  assert.deepEqual(out[0].json, { deleted: true });
+});

@@ -24,9 +24,13 @@ const faqs = [
   { q: "Is there an SDK?", a: "The API is plain JSON over HTTPS, so any HTTP client works. Copy the examples in the docs for curl, Node and Python." },
 ];
 
-export default function Home() {
+export default async function Home({ searchParams }: { searchParams: Promise<{ deleted?: string }> }) {
+  const { deleted } = await searchParams;
   return (
     <>
+      {deleted ? (
+        <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-3 text-center text-sm text-emerald-900">Your account and its data were deleted.</div>
+      ) : null}
       <section className="relative overflow-hidden">
         <div className="pointer-events-none absolute inset-x-0 -top-40 -z-10 h-[500px] bg-[radial-gradient(ellipse_at_top,rgba(79,70,229,0.15),transparent_60%)]" />
         <div className="mx-auto grid max-w-6xl gap-12 px-4 pb-16 pt-16 sm:pt-24 lg:grid-cols-2 lg:items-center">
